@@ -1,5 +1,7 @@
 *.jpg
 *.pyc
+._*
+*DS_Store
 config.json
 token.pickle
 client_secret.json
@@ -8,3 +10,5 @@ scripts/scratch/
 imgur_api.json
 client_secret*.json
 photos_api*.json
+photos/*
+venv

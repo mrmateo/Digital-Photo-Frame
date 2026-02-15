@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import requests
+import subprocess
 from kivy.animation import Animation
 from kivy.app import App
 from kivy.clock import Clock
@@ -78,8 +79,8 @@ class PhotoFrameApp(App):
             logging.warning("No images found in the directory.")
             return FloatLayout()  # Return an empty layout to avoid crashing
 
-        self.image_widget = TapImage(source=self.images[self.index], allow_stretch=True,
-                                     keep_ratio=True, opacity=1)
+        self.image_widget = TapImage(source=self.images[self.index], fit_mode="cover",
+                                     opacity=1)
 
         layout = FloatLayout()
 
@@ -188,20 +189,20 @@ class PhotoFrameApp(App):
 
     def fetch_weather_data(self) -> str:
         """
-        Fetch weather data from the OpenWeatherMap API.
+        Fetch weather data from local Home Assistant instance.
 
         Returns:
             str: Weather data formatted as "temperature | weather".
         """
-        api_key, location = self.local_config['weather_api_key'], self.local_config['weather_location']
+        api_key = self.local_config['weather_api_key']
 
-        url = f'http://api.openweathermap.org/data/2.5/weather?q={location}&appid={api_key}&units=imperial'
+        url = 'http://home.mateolab.com:8123/api/states/weather.kluf_daynight'
 
         try:
-            response = requests.get(url)
+            response = requests.get(url, headers={"Authorization": f"Bearer {api_key}"})
             data = response.json()
-            temperature = round(data['main']['temp'])
-            weather = data['weather'][0]['description'].title()
+            temperature = round(data['attributes']['temperature'])
+            weather = data['state'].title()
             return f"{temperature}°F | {weather}"
         except Exception as e:
             logging.error("Error fetching weather data: %s", e)
@@ -222,12 +223,23 @@ class PhotoFrameApp(App):
         """
         Check for new images in the photos directory and reload the images if new images are found.
         """
+       
         try:
-            sync_photos()
+            # sync images from google drive
+            result=subprocess.run(['./sync_photos.sh'], shell=True, check=True, capture_output=True, text=True)
+
+            # Log stdout at INFO level
+            for line in result.stdout.splitlines():
+              logging.info(line)
+
+            # Log stderr at ERROR level
+            for line in result.stderr.splitlines():
+              logging.error(line)
+
         except Exception as e:
             self.show_toast("Error syncing photos.")
             logging.error("Error syncing photos: %s", e)
-            return
+            return 
 
         new_images = self.load_images(os.path.join(os.path.dirname(__file__), '../photos'))
 
