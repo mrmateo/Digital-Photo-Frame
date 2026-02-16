@@ -4,10 +4,10 @@
 
 
 ## Overview
-Kivy-based application developed to run on a raspberry pi. Designed to display photos synced from a Google Photos album on a touchscreen display. Created for Christmas 2023 as a gift for my ~~fiance~~ wife and father.
+Kivy-based application developed to run on a raspberry pi. Designed to display photos synced from an Immich server on a touchscreen display. Created for Christmas 2023 as a gift for my ~~fiance~~ wife and father.
 
 ## Key Features
-- **Photo Synchronization**: Integrates with Google Photos API to sync photos.
+- **Photo Synchronization**: Integrates with Immich API to sync photos.
 - **Interactive UI**: Navigate through photos with touch gestures.
 - **Weather and Time Display**: Fetches and shows current weather and time.
 - **Automatic Updates**: Periodically syncs new photos and deletes old ones.
@@ -19,13 +19,13 @@ Kivy-based application developed to run on a raspberry pi. Designed to display p
    pip install -r requirements.txt
    ```
 3. **Configure API and Local Settings**:
-   - Create a `config.json` with keys like `api_service_name`, `api_version`, `scopes`, `local_folder`, and `album_id`.
-   - Save your Google API credentials in `client_secret.json`.
-     - [Get started w/ the Google API](https://developers.google.com/photos/library/guides/get-started)
+   - Create a `config.json` with keys like `immich_server_url`, `api_key`, `album_id`, and `local_folder`.
+   - Get your Immich API key from your Immich server settings.
+     - [Get started w/ Immich](https://immich.app/docs/install/docker-compose#environment-variables)
 
 ## Running the Application
 1. **Initial Photo Population**:
-   - Run `sync_photos.py` initially to populate your local folder with photos from the specified Google Photos album.
+   - Run `sync_photos.py` initially to populate your local folder with photos from the specified Immich album.
    ```bash
    python sync_photos.py
    ```
@@ -36,8 +36,8 @@ Kivy-based application developed to run on a raspberry pi. Designed to display p
    ```
 
 ## Notes
-- The script uses the pickle module for saving and loading Google Photos client credentials.
-- For new installations or invalid credentials, a login window will prompt you for authentication.
+- The application requires an Immich server with an API key and album ID configured in `config.json`.
+- For new installations, ensure your Immich server is running and accessible from the Raspberry Pi.
 
 ## Run as a Service
 - A sample `.service` file is provided in `/services` for configuring the app to run with `systemctl`.

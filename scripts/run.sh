@@ -1,6 +1,9 @@
 #!/bin/bash
 
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Activate the virtual environment and display our photos
-source /home/pi/Digital-Photo-Frame/digital-photo-frame/bin/activate
-python /home/pi/Digital-Photo-Frame/scripts/run_photo_display.py
+source "${SCRIPT_DIR}/../venv/bin/activate"
+python "${SCRIPT_DIR}/run_photo_display.py"
 deactivate

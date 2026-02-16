@@ -193,6 +193,7 @@ class PhotoFrameApp(App):
         Returns:
             str: Weather data formatted as "temperature | weather".
         """
+        return "80F | Sunny"
         api_key, location = self.local_config['weather_api_key'], self.local_config['weather_location']
 
         url = f'http://api.openweathermap.org/data/2.5/weather?q={location}&appid={api_key}&units=imperial'

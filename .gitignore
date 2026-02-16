@@ -1,10 +1,12 @@
 *.jpg
 *.pyc
 config.json
+token.json
 token.pickle
 client_secret.json
+client_secret*.json
 config_jenny.json
 scripts/scratch/
 imgur_api.json
-client_secret*.json
 photos_api*.json
+token.json.old

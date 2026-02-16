@@ -1,115 +1,134 @@
-import json
 import os
+import json
 import requests
-from requests_oauthlib import OAuth2Session
-
+from datetime import datetime
+from requests.exceptions import RequestException, Timeout, ConnectionError
 
 ABSOLUTE_PATH = os.path.dirname(__file__)
-API_CONFIG = os.path.join(ABSOLUTE_PATH, "photos_api.json")
 LOCAL_CONFIG = os.path.join(ABSOLUTE_PATH, "config.json")
 
+# Absolute path to the photos directory
+PHOTOS_DIR = os.path.join(os.path.dirname(__file__), '..', 'photos')
 
-def load_config():
-    try:
-        with open(API_CONFIG) as f:
-            api_config = json.load(f)
-
-        with open(LOCAL_CONFIG) as f:
-            local_config = json.load(f)
-
-        if api_config and local_config:
-            return api_config, local_config
-
-    except Exception as e:
-        print(e)
-        return None
+# HTTP request timeout in seconds
+REQUEST_TIMEOUT = 10
 
 
-def get_new_access_token():
-    api_config, _ = load_config()
+def validate_config(config):
+    """Validate required configuration keys exist and are non-empty.
 
-    extra = {
-        'client_id': api_config['CLIENT_ID'],
-        'client_secret': api_config['CLIENT_SECRET'],
-    }
+    Args:
+        config: Dictionary containing configuration values.
 
-    google = OAuth2Session(api_config['CLIENT_ID'])
-    new_token = google.refresh_token(api_config['TOKEN_URL'],
-                                     refresh_token=api_config['REFRESH_TOKEN'],
-                                     **extra)
-    api_config['ACCESS_TOKEN'] = new_token['access_token']
-
-    if 'refresh_token' in new_token.keys():
-        api_config['REFRESH_TOKEN'] = new_token['refresh_token']
-
-    with open(API_CONFIG, 'w') as f:
-        f.write(json.dumps(api_config, indent=4))
-
-    return new_token['access_token']
-
-
-def get_photos():
-    api_config, _ = load_config()
-
-    headers = {
-        "Authorization": f"Bearer {api_config['ACCESS_TOKEN']}"
-    }
-
-    payload = {
-        "albumId": api_config['ALBUM_ID'],
-        "pageSize": 100
-    }
-
-    response = requests.post('https://photoslibrary.googleapis.com/v1/mediaItems:search',
-                             headers=headers, json=payload, timeout=10)
-
-    if response.status_code == 200:
-        items = response.json().get('mediaItems', [])
-        return {item['filename']: item['baseUrl'] for item in items}
-
-    else:
-        new_token = get_new_access_token()
-
-        headers['Authorization'] = f"Bearer {new_token}"
-
-        response = requests.post('https://photoslibrary.googleapis.com/v1/mediaItems:search',
-                                 headers=headers, json=payload, timeout=10)
-
-        if response.status_code == 200:
-            items = response.json().get('mediaItems', [])
-            return {item['filename']: item['baseUrl'] for item in items}
+    Raises:
+        ValueError: If required configuration is missing or empty.
+    """
+    required_keys = ['immich_server_url', 'api_key', 'album_id', 'local_folder']
+    missing_keys = [key for key in required_keys if not config.get(key)]
+    if missing_keys:
+        raise ValueError(f"Missing required configuration keys: {', '.join(missing_keys)}")
 
 
 def sync_photos():
+    """Synchronize photos from Immich album to local storage.
+
+    Fetches photos from the specified Immich album and downloads them to the
+    configured local folder. Removes local files that no longer exist in the album.
     """
-        Sync photos between Google Photos and a local folder.
-    """
-    _, local_config = load_config()
-    local_folder = local_config['local_folder']
+    try:
+        with open(LOCAL_CONFIG) as f:
+            local_config = json.load(f)
 
-    # List photos in the Google Photos album
-    photos = get_photos()
+        validate_config(local_config)
 
-    # Check if no photos are returned from Google Photos
-    if not photos:
-        print("No photos returned from Google Photos. Local folder remains unchanged.")
-        return  # Skip updating the local folder if no photos are found
+        immich_server_url = local_config['immich_server_url'].rstrip('/')
+        api_key = local_config['api_key']
+        album_id = local_config['album_id']
+        local_folder = local_config['local_folder']
 
-    photos_path = os.path.join(os.path.dirname(__file__), local_folder)
-    # Download new photos
-    for filename, url in photos.items():
-        local_path = os.path.join(photos_path, filename)
-        if not os.path.exists(local_path):
-            response = requests.get(url)
-            if response.status_code == 200:
-                with open(local_path, 'wb') as file:
-                    file.write(response.content)
+        headers = {
+            "x-api-key": api_key,
+            "Content-Type": "application/json"
+        }
 
-    # Delete photos not in the album
-    for filename in os.listdir(photos_path):
-        if filename not in photos:
-            os.remove(os.path.join(photos_path, filename))
+        # Fetch photos from Immich album with timeout
+        try:
+            response = requests.get(
+                f"{immich_server_url}/api/albums/{album_id}",
+                headers=headers,
+                timeout=REQUEST_TIMEOUT
+            )
+            response.raise_for_status()
+            album = response.json()
+            photos = album.get('assets', [])
+        except (RequestException, Timeout) as e:
+            print(f"Error fetching album from Immich: {e}")
+            return
 
+        # Check if no photos are returned
+        if not photos:
+            print("No photos returned from Immich. Local folder remains unchanged.")
+            return
+
+        print(f"Found {len(photos)} photos.")
+
+        # Create local photos directory if it doesn't exist
+        photos_path = os.path.join(ABSOLUTE_PATH, local_folder)
+        os.makedirs(photos_path, exist_ok=True)
+
+        # Download photos
+        downloaded_count = 0
+        for photo in photos:
+            filename = photo['originalFileName']
+            asset_id = photo['id']
+
+            # Construct download URL for original file
+            download_url = f"{immich_server_url}/api/assets/{asset_id}/original"
+
+            local_path = os.path.join(photos_path, filename)
+
+            if not os.path.exists(local_path):
+                print(f"Downloading {filename}...")
+                try:
+                    download_response = requests.get(
+                        download_url,
+                        headers=headers,
+                        timeout=REQUEST_TIMEOUT
+                    )
+                    if download_response.status_code == 200:
+                        with open(local_path, 'wb') as file:
+                            file.write(download_response.content)
+                        print(f"Successfully downloaded {filename}")
+                        downloaded_count += 1
+                    else:
+                        print(f"Failed to download {filename}: HTTP {download_response.status_code}")
+                except (RequestException, Timeout) as e:
+                    print(f"Error downloading {filename}: {e}")
+                    continue
+
+        # Delete photos not in the album
+        existing_files = os.listdir(photos_path)
+        photo_filenames = [photo['originalFileName'] for photo in photos]
+
+        for filename in list(existing_files):  # Create copy to avoid modification during iteration
+            if filename not in photo_filenames:
+                file_path = os.path.join(photos_path, filename)
+                try:
+                    os.remove(file_path)
+                    print(f"Deleted {filename}")
+                except OSError as e:
+                    print(f"Error deleting {filename}: {e}")
+
+        print(f"Sync complete. Downloaded {downloaded_count} new photos.")
+
+    except FileNotFoundError:
+        print(f"Error: Configuration file not found at {LOCAL_CONFIG}")
+    except json.JSONDecodeError as e:
+        print(f"Error: Invalid JSON in configuration file: {e}")
+    except ValueError as e:
+        print(f"Error: Configuration issue: {e}")
+    except Exception as e:
+        print(f"Unexpected error during sync: {e}")
 
 if __name__ == '__main__':
     sync_photos()
