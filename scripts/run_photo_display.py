@@ -186,22 +186,74 @@ class PhotoFrameApp(App):
         logging.info("Shutting down...")
         os.system('sudo shutdown now')
 
+    def get_weather_icon(self, condition: str) -> str:
+        """
+        Map weather condition to a Unicode weather icon.
+
+        Args:
+            condition: Weather condition string from Home Assistant.
+
+        Returns:
+            str: Unicode weather icon.
+        """
+        condition_lower = condition.lower() if condition else ''
+
+        icons = {
+            'sunny': '☀️',
+            'clear': '☀️',
+            'cloudy': '☁️',
+            'partlycloudy': '⛅',
+            'mostlycloudy': '☁️',
+            'overcast': '☁️',
+            'rain': '🌧️',
+            'lightrain': '🌦️',
+            'heavyrain': '⛈️',
+            'showers': '🌧️',
+            'drizzle': '🌦️',
+            'thunderstorm': '⚡',
+            'thunder': '⚡',
+            'snow': '❄️',
+            'lightsnow': '❄️',
+            'heavysnow': '❄️',
+            'blizzard': '❄️',
+            'fog': '🌫️',
+            'haze': '🌫️',
+            'windy': '💨',
+            'rainandsnow': '🌧️❄️',
+        }
+
+        # Check for exact match first
+        if condition_lower in icons:
+            return icons[condition_lower]
+
+        # Check for partial matches
+        for key, icon in icons.items():
+            if key in condition_lower:
+                return icon
+
+        # Default icon
+        return '.weather'
+
     def fetch_weather_data(self) -> str:
         """
         Fetch weather data from local Home Assistant instance.
 
         Returns:
-            str: Weather data formatted as "temperature | weather".
+            str: Weather data formatted as "icon temperature | weather".
         """
         api_key = self.local_config['weather_api_key']
         url = self.local_config['home_assistant_weather_url']
 
         try:
             response = requests.get(url, headers={"Authorization": f"Bearer {api_key}"})
+            response.raise_for_status()
             data = response.json()
+
             temperature = round(data['attributes']['temperature'])
             weather = data['state'].title()
-            return f"{temperature}°F | {weather}"
+            icon = self.get_weather_icon(weather)
+
+            return f"{icon} {temperature}°F | {weather}"
         except Exception as e:
             logging.error("Error fetching weather data: %s", e)
             return "N/A"
