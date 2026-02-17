@@ -1,4 +1,4 @@
 requests==2.32.3
 pillow==12.1.1
-pillow-heif==0.19.0
-kivy==2.3.0
+pillow-heif==1.2.0
+kivy==2.3.1
