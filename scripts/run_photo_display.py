@@ -188,21 +188,19 @@ class PhotoFrameApp(App):
 
     def fetch_weather_data(self) -> str:
         """
-        Fetch weather data from the OpenWeatherMap API.
+        Fetch weather data from local Home Assistant instance.
 
         Returns:
             str: Weather data formatted as "temperature | weather".
         """
-        return "80F | Sunny"
-        api_key, location = self.local_config['weather_api_key'], self.local_config['weather_location']
-
-        url = f'http://api.openweathermap.org/data/2.5/weather?q={location}&appid={api_key}&units=imperial'
+        api_key = self.local_config['weather_api_key']
+        url = self.local_config['home_assistant_weather_url']
 
         try:
-            response = requests.get(url)
+            response = requests.get(url, headers={"Authorization": f"Bearer {api_key}"})
             data = response.json()
-            temperature = round(data['main']['temp'])
-            weather = data['weather'][0]['description'].title()
+            temperature = round(data['attributes']['temperature'])
+            weather = data['state'].title()
             return f"{temperature}°F | {weather}"
         except Exception as e:
             logging.error("Error fetching weather data: %s", e)
