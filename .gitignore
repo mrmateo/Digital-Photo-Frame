@@ -10,3 +10,5 @@ scripts/scratch/
 imgur_api.json
 photos_api*.json
 token.json.old
+**DS_Store
+venv
