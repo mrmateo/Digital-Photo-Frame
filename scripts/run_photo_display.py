@@ -45,16 +45,22 @@ class TapImage(Image):
         """
         current_time = datetime.now().timestamp()
         if current_time - self.last_touch_time < self.touch_threshold:
-            return False  # Debounce rapid touches
+            return True  # Debounce rapid touches
 
         self.last_touch_time = current_time
+        handled = False
 
         if touch.x < self.width * self.edge_threshold:  # Touched on the left edge
             app = App.get_running_app()
             app.load_previous_image(manual=True)
+            handled = True
         elif touch.x > self.width * (1 - self.edge_threshold):  # Touched on the right edge
             app = App.get_running_app()
             app.load_next_image(force=True, manual=True)
+            handled = True
+
+        if handled:
+            return True
 
         return super(TapImage, self).on_touch_down(touch)
 
@@ -94,6 +100,7 @@ class PhotoFrameApp(App):
         self.weather_request_in_progress = False
         self.transition_seq = 0
         self.pending_auto_transition_id = None
+        self.last_auto_advance_time = 0.0
         self.photos_path = self.resolve_photos_path(self.local_config.get('local_folder'))
         os.makedirs(self.photos_path, exist_ok=True)
         self.images = self.load_images(self.photos_path)
@@ -570,6 +577,10 @@ class PhotoFrameApp(App):
         if (animation and widget) or force:
             self.index = (self.index + 1) % len(self.images)
             self.image_widget.source = self.images[self.index]
+
+            if animation and widget:
+                self.last_auto_advance_time = time.monotonic()
+
             anim = Animation(opacity=1, duration=1.5)
             anim.start(self.image_widget)
 
@@ -583,7 +594,12 @@ class PhotoFrameApp(App):
         if manual:
             self.prepare_manual_navigation()
 
-        self.index = (self.index - 1) % len(self.images)
+        step = 1
+        if manual and (time.monotonic() - self.last_auto_advance_time) <= 0.8:
+            step = 2
+            self.last_auto_advance_time = 0.0
+
+        self.index = (self.index - step) % len(self.images)
         self.image_widget.source = self.images[self.index]
         anim = Animation(opacity=1, duration=1.5)
         anim.start(self.image_widget)
