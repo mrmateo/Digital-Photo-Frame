@@ -103,9 +103,6 @@ class PhotoFrameApp(App):
         self.index = 0
         self.sync_in_progress = False
         self.weather_request_in_progress = False
-        self.transition_seq = 0
-        self.pending_auto_transition_id = None
-        self.pending_auto_advance_event = None
         self.manual_nav_pause_until = 0.0
         self.photos_path = self.resolve_photos_path(self.local_config.get('local_folder'))
         os.makedirs(self.photos_path, exist_ok=True)
@@ -537,7 +534,7 @@ class PhotoFrameApp(App):
 
     def update_image(self, dt=None):
         """
-        Update the image being displayed by fading the current image out and vice versa.
+        Update the image being displayed on the slideshow timer.
         """
         if not self.images:
             return
@@ -545,42 +542,7 @@ class PhotoFrameApp(App):
         if time.monotonic() < self.manual_nav_pause_until:
             return
 
-        self.transition_seq += 1
-        transition_id = self.transition_seq
-        self.pending_auto_transition_id = transition_id
-
-        if self.pending_auto_advance_event is not None:
-            self.pending_auto_advance_event.cancel()
-            self.pending_auto_advance_event = None
-
-        Animation.cancel_all(self.image_widget)
-
-        fade_out = Animation(opacity=0, duration=1.5)
-        fade_out.start(self.image_widget)
-
-        self.pending_auto_advance_event = Clock.schedule_once(
-            lambda _dt, active_id=transition_id: self._complete_auto_advance(active_id),
-            1.5
-        )
-
-    def _complete_auto_advance(self, transition_id):
-        self.pending_auto_advance_event = None
-
-        if not self.images:
-            return
-
-        if transition_id != self.pending_auto_transition_id:
-            return
-
-        if time.monotonic() < self.manual_nav_pause_until:
-            return
-
-        self.pending_auto_transition_id = None
-        self.index = (self.index + 1) % len(self.images)
-        self.image_widget.source = self.images[self.index]
-        self.image_widget.opacity = 0
-        anim = Animation(opacity=1, duration=1.5)
-        anim.start(self.image_widget)
+        self.load_next_image(force=True)
 
     def reset_image_cycle_timer(self):
         if self.image_cycle_event is not None:
@@ -588,13 +550,7 @@ class PhotoFrameApp(App):
         self.image_cycle_event = Clock.schedule_interval(self.update_image, self.image_cycle_seconds)
 
     def prepare_manual_navigation(self):
-        self.transition_seq += 1
-        self.pending_auto_transition_id = None
-        self.manual_nav_pause_until = time.monotonic() + 1.0
-
-        if self.pending_auto_advance_event is not None:
-            self.pending_auto_advance_event.cancel()
-            self.pending_auto_advance_event = None
+        self.manual_nav_pause_until = time.monotonic() + 0.8
 
         Animation.cancel_all(self.image_widget)
         self.image_widget.opacity = 1
@@ -607,20 +563,23 @@ class PhotoFrameApp(App):
         if not self.images:
             return
 
+        if not (manual or force or (animation and widget)):
+            return
+
         if manual:
             self.prepare_manual_navigation()
 
-        if manual or force:
-            self.index = (self.index + 1) % len(self.images)
-            self.image_widget.source = self.images[self.index]
+        self.index = (self.index + 1) % len(self.images)
+        self.image_widget.source = self.images[self.index]
 
-            if manual:
-                self.image_widget.opacity = 1
-                return
+        if manual:
+            self.image_widget.opacity = 1
+            return
 
-            self.image_widget.opacity = 0
-            anim = Animation(opacity=1, duration=1.5)
-            anim.start(self.image_widget)
+        Animation.cancel_all(self.image_widget)
+        self.image_widget.opacity = 0
+        anim = Animation(opacity=1, duration=1.5)
+        anim.start(self.image_widget)
 
     def load_previous_image(self, manual=False):
         """
@@ -639,6 +598,8 @@ class PhotoFrameApp(App):
             self.image_widget.opacity = 1
             return
 
+        Animation.cancel_all(self.image_widget)
+        self.image_widget.opacity = 0
         anim = Animation(opacity=1, duration=1.5)
         anim.start(self.image_widget)
 
