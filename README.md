@@ -13,7 +13,7 @@ Kivy-based application developed to run on a raspberry pi. Designed to display p
 - **Automatic Updates**: Periodically syncs new photos and deletes old ones.
 
 ## Initial Setup
-1. **Install Python**: Ensure Python >=3.9 is installed on your Raspberry Pi.
+1. **Install Python**: Ensure Python >=3.11 is installed on your Raspberry Pi.
 2. **Install Dependencies**:
    ```bash
    pip install -r requirements.txt

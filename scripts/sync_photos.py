@@ -105,16 +105,14 @@ def sync_photos():
             print(f"Error fetching album from Immich: {e}")
             return
 
-        # Check if no photos are returned
-        if not photos:
-            print("No photos returned from Immich. Local folder remains unchanged.")
-            return
-
-        print(f"Found {len(photos)} photos.")
-
         # Create local photos directory if it doesn't exist
         photos_path = resolve_photos_path(local_folder)
         os.makedirs(photos_path, exist_ok=True)
+
+        if not photos:
+            print("No photos returned from Immich. Removing local photos to match empty album.")
+        else:
+            print(f"Found {len(photos)} photos.")
 
         # Download photos
         downloaded_count = 0

@@ -125,14 +125,16 @@ class PhotoFrameApp(App):
         self.images = self.load_images(self.photos_path)
         self.toast = None
 
+        layout = FloatLayout()
+
+        self.image_widget = TapImage(
+            source=self.images[self.index] if self.images else '',
+            fit_mode="cover",
+            opacity=1
+        )
+
         if not self.images:
             logging.warning("No images found in the directory.")
-            return FloatLayout()  # Return an empty layout to avoid crashing
-
-        self.image_widget = TapImage(source=self.images[self.index],
-                                     fit_mode="cover", opacity=1)
-
-        layout = FloatLayout()
 
         layout.add_widget(self.image_widget)
         self.image_cycle_seconds = 15
@@ -140,6 +142,7 @@ class PhotoFrameApp(App):
 
         # Schedule the check for new images every hour (3600 seconds)
         Clock.schedule_interval(self.check_for_new_images, 3600)
+        Clock.schedule_once(self.check_for_new_images, 0)
 
         # Build our information panel (time, date, weather)
         self.info_panel = InfoPanel(
@@ -537,12 +540,15 @@ class PhotoFrameApp(App):
 
             if not self.images:
                 logging.warning("No images found in the photos directory.")
+                self.image_widget.source = ''
                 return
 
             # If the currently displayed image was deleted, load the first image from the new list
             if self.image_widget.source not in self.images:
                 self.index = 0
                 self.image_widget.source = self.images[self.index]
+                self.image_widget.opacity = 1
+                return
 
             self.load_next_image(force=True)  # Force refresh the displayed image
         else:
