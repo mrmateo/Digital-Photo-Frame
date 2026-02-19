@@ -43,6 +43,9 @@ class TapImage(Image):
         Returns:
             bool: True if the touch event is handled, False otherwise.
         """
+        if not self.collide_point(*touch.pos):
+            return super(TapImage, self).on_touch_down(touch)
+
         current_time = datetime.now().timestamp()
         if current_time - self.last_touch_time < self.touch_threshold:
             return True  # Debounce rapid touches
@@ -50,11 +53,13 @@ class TapImage(Image):
         self.last_touch_time = current_time
         handled = False
 
-        if touch.x < self.width * self.edge_threshold:  # Touched on the left edge
+        local_x = touch.x - self.x
+
+        if local_x < self.width * self.edge_threshold:  # Touched on the left edge
             app = App.get_running_app()
             app.load_previous_image(manual=True)
             handled = True
-        elif touch.x > self.width * (1 - self.edge_threshold):  # Touched on the right edge
+        elif local_x > self.width * (1 - self.edge_threshold):  # Touched on the right edge
             app = App.get_running_app()
             app.load_next_image(force=True, manual=True)
             handled = True
@@ -100,7 +105,8 @@ class PhotoFrameApp(App):
         self.weather_request_in_progress = False
         self.transition_seq = 0
         self.pending_auto_transition_id = None
-        self.last_auto_advance_time = 0.0
+        self.pending_auto_advance_event = None
+        self.manual_nav_pause_until = 0.0
         self.photos_path = self.resolve_photos_path(self.local_config.get('local_folder'))
         os.makedirs(self.photos_path, exist_ok=True)
         self.images = self.load_images(self.photos_path)
@@ -536,15 +542,44 @@ class PhotoFrameApp(App):
         if not self.images:
             return
 
+        if time.monotonic() < self.manual_nav_pause_until:
+            return
+
         self.transition_seq += 1
         transition_id = self.transition_seq
         self.pending_auto_transition_id = transition_id
 
-        anim = Animation(opacity=0, duration=1.5)
-        anim.bind(
-            on_complete=lambda animation, widget, active_id=transition_id:
-            self.load_next_image(animation=animation, widget=widget, transition_id=active_id)
+        if self.pending_auto_advance_event is not None:
+            self.pending_auto_advance_event.cancel()
+            self.pending_auto_advance_event = None
+
+        Animation.cancel_all(self.image_widget)
+
+        fade_out = Animation(opacity=0, duration=1.5)
+        fade_out.start(self.image_widget)
+
+        self.pending_auto_advance_event = Clock.schedule_once(
+            lambda _dt, active_id=transition_id: self._complete_auto_advance(active_id),
+            1.5
         )
+
+    def _complete_auto_advance(self, transition_id):
+        self.pending_auto_advance_event = None
+
+        if not self.images:
+            return
+
+        if transition_id != self.pending_auto_transition_id:
+            return
+
+        if time.monotonic() < self.manual_nav_pause_until:
+            return
+
+        self.pending_auto_transition_id = None
+        self.index = (self.index + 1) % len(self.images)
+        self.image_widget.source = self.images[self.index]
+        self.image_widget.opacity = 0
+        anim = Animation(opacity=1, duration=1.5)
         anim.start(self.image_widget)
 
     def reset_image_cycle_timer(self):
@@ -555,6 +590,12 @@ class PhotoFrameApp(App):
     def prepare_manual_navigation(self):
         self.transition_seq += 1
         self.pending_auto_transition_id = None
+        self.manual_nav_pause_until = time.monotonic() + 1.0
+
+        if self.pending_auto_advance_event is not None:
+            self.pending_auto_advance_event.cancel()
+            self.pending_auto_advance_event = None
+
         Animation.cancel_all(self.image_widget)
         self.image_widget.opacity = 1
         self.reset_image_cycle_timer()
@@ -569,18 +610,15 @@ class PhotoFrameApp(App):
         if manual:
             self.prepare_manual_navigation()
 
-        if animation and widget:
-            if transition_id is None or transition_id != self.pending_auto_transition_id:
-                return
-            self.pending_auto_transition_id = None
-
-        if (animation and widget) or force:
+        if manual or force:
             self.index = (self.index + 1) % len(self.images)
             self.image_widget.source = self.images[self.index]
 
-            if animation and widget:
-                self.last_auto_advance_time = time.monotonic()
+            if manual:
+                self.image_widget.opacity = 1
+                return
 
+            self.image_widget.opacity = 0
             anim = Animation(opacity=1, duration=1.5)
             anim.start(self.image_widget)
 
@@ -594,13 +632,13 @@ class PhotoFrameApp(App):
         if manual:
             self.prepare_manual_navigation()
 
-        step = 1
-        if manual and (time.monotonic() - self.last_auto_advance_time) <= 0.8:
-            step = 2
-            self.last_auto_advance_time = 0.0
-
-        self.index = (self.index - step) % len(self.images)
+        self.index = (self.index - 1) % len(self.images)
         self.image_widget.source = self.images[self.index]
+
+        if manual:
+            self.image_widget.opacity = 1
+            return
+
         anim = Animation(opacity=1, duration=1.5)
         anim.start(self.image_widget)
 
