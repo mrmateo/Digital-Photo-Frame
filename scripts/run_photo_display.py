@@ -51,10 +51,10 @@ class TapImage(Image):
 
         if touch.x < self.width * self.edge_threshold:  # Touched on the left edge
             app = App.get_running_app()
-            app.load_previous_image()
+            app.load_previous_image(manual=True)
         elif touch.x > self.width * (1 - self.edge_threshold):  # Touched on the right edge
             app = App.get_running_app()
-            app.load_next_image(force=True)
+            app.load_next_image(force=True, manual=True)
 
         return super(TapImage, self).on_touch_down(touch)
 
@@ -107,7 +107,8 @@ class PhotoFrameApp(App):
         layout = FloatLayout()
 
         layout.add_widget(self.image_widget)
-        Clock.schedule_interval(self.update_image, 15)  # Cycle images every 15 seconds
+        self.image_cycle_seconds = 15
+        self.image_cycle_event = Clock.schedule_interval(self.update_image, self.image_cycle_seconds)
 
         # Schedule the check for new images every hour (3600 seconds)
         Clock.schedule_interval(self.check_for_new_images, 3600)
@@ -157,12 +158,13 @@ class PhotoFrameApp(App):
             source=self.get_weather_icon_path(None),
             size_hint=(None, None),
             size=(dp(30), dp(30)),
-            fit_mode='contain'
+            fit_mode='contain',
+            pos_hint={'center_y': 0.5}
         )
 
         self.weather_label = Label(
             text='Weather loading...',
-            font_size='22sp',
+            font_size='24sp',
             color=[0.95, 0.99, 1, 1],
             size_hint=(1, None),
             height=dp(40),
@@ -171,8 +173,44 @@ class PhotoFrameApp(App):
         )
         self.weather_label.bind(size=self._sync_text_size)
 
+        button_path = os.path.join(os.path.dirname(__file__), 'assets')
+        refresh_icon = os.path.join(button_path, 'refresh_icon.png')
+        power_icon = os.path.join(button_path, 'power_icon.png')
+
+        self.weather_controls = BoxLayout(
+            orientation='horizontal',
+            size_hint=(None, None),
+            size=(dp(96), dp(36)),
+            spacing=dp(8),
+            pos_hint={'center_y': 0.5}
+        )
+
+        self.refresh_button = Button(
+            background_normal=refresh_icon,
+            background_down=refresh_icon,
+            border=(0, 0, 0, 0),
+            size_hint=(None, None),
+            size=(dp(36), dp(36)),
+            opacity=0.9
+        )
+        self.refresh_button.bind(on_press=self.check_for_new_images)
+
+        self.power_button = Button(
+            background_normal=power_icon,
+            background_down=power_icon,
+            border=(0, 0, 0, 0),
+            size_hint=(None, None),
+            size=(dp(36), dp(36)),
+            opacity=0.9
+        )
+        self.power_button.bind(on_press=self.power_off)
+
+        self.weather_controls.add_widget(self.refresh_button)
+        self.weather_controls.add_widget(self.power_button)
+
         self.weather_row.add_widget(self.weather_icon)
         self.weather_row.add_widget(self.weather_label)
+        self.weather_row.add_widget(self.weather_controls)
 
         self.info_panel.add_widget(self.clock_label)
         self.info_panel.add_widget(self.date_label)
@@ -185,38 +223,6 @@ class PhotoFrameApp(App):
         Clock.schedule_interval(self.update_clock, 1)  # Update clock every second
         Clock.schedule_interval(self.update_weather, 3600)  # Update weather every hour
         Clock.schedule_once(self.update_weather, 0)  # Load weather asynchronously
-
-        # Build our refresh widget
-        button_path = os.path.join(os.path.dirname(__file__), 'assets')
-        refresh_button = os.path.join(button_path, 'refresh_icon.png')
-        self.refresh_button = Button(
-            background_normal=refresh_button,
-            size_hint=(None, None),
-            size=(50, 50),
-            opacity=0.7
-        )
-        self.refresh_button.bind(on_press=self.check_for_new_images)
-
-        # Create and add the new power-off button
-        power_button = Button(
-            background_normal=os.path.join(button_path, 'power_icon.png'),
-            size_hint=(None, None),
-            size=(50, 50),
-            opacity=0.7
-        )
-        power_button.bind(on_press=self.power_off)
-
-        # Create a vertical layout for buttons
-        button_layout = BoxLayout(size_hint=(None, None), size=(50, 100),
-                                  pos_hint={'right': 0.98, 'y': 0.03},
-                                  orientation='vertical', spacing=10)
-
-        # Add buttons to the layout
-        button_layout.add_widget(self.refresh_button)
-        button_layout.add_widget(power_button)
-
-        # Add the button layout to the main layout
-        layout.add_widget(button_layout)
 
         return layout
 
@@ -253,7 +259,7 @@ class PhotoFrameApp(App):
         return os.path.normpath(os.path.join(os.path.dirname(__file__), local_folder))
 
     def _sync_text_size(self, label, _size):
-        label.text_size = (label.width, None)
+        label.text_size = (label.width, label.height)
 
     def on_window_resize(self, *_):
         self.update_info_panel_layout()
@@ -269,12 +275,15 @@ class PhotoFrameApp(App):
             self.info_panel.spacing = dp(8)
             self.clock_label.font_size = '64sp'
             self.date_label.font_size = '24sp'
-            self.weather_label.font_size = '24sp'
+            self.weather_label.font_size = '28sp'
             self.clock_label.height = dp(86)
             self.date_label.height = dp(34)
-            self.weather_row.height = dp(52)
-            self.weather_label.height = dp(52)
-            self.weather_icon.size = (dp(36), dp(36))
+            self.weather_row.height = dp(60)
+            self.weather_label.height = dp(60)
+            self.weather_icon.size = (dp(40), dp(40))
+            self.weather_controls.size = (dp(112), dp(44))
+            self.refresh_button.size = (dp(44), dp(44))
+            self.power_button.size = (dp(44), dp(44))
         else:
             panel_width = max(dp(280), min(dp(460), Window.width * 0.56))
             panel_height = dp(160)
@@ -283,12 +292,15 @@ class PhotoFrameApp(App):
             self.info_panel.spacing = dp(4)
             self.clock_label.font_size = '50sp'
             self.date_label.font_size = '18sp'
-            self.weather_label.font_size = '21sp'
+            self.weather_label.font_size = '24sp'
             self.clock_label.height = dp(68)
             self.date_label.height = dp(28)
-            self.weather_row.height = dp(42)
-            self.weather_label.height = dp(42)
-            self.weather_icon.size = (dp(30), dp(30))
+            self.weather_row.height = dp(46)
+            self.weather_label.height = dp(46)
+            self.weather_icon.size = (dp(34), dp(34))
+            self.weather_controls.size = (dp(96), dp(36))
+            self.refresh_button.size = (dp(36), dp(36))
+            self.power_button.size = (dp(36), dp(36))
 
         self.info_panel.size = (panel_width, panel_height)
 
@@ -519,12 +531,25 @@ class PhotoFrameApp(App):
         anim.bind(on_complete=self.load_next_image)
         anim.start(self.image_widget)
 
-    def load_next_image(self, animation=None, widget=None, force=False):
+    def reset_image_cycle_timer(self):
+        if self.image_cycle_event is not None:
+            self.image_cycle_event.cancel()
+        self.image_cycle_event = Clock.schedule_interval(self.update_image, self.image_cycle_seconds)
+
+    def prepare_manual_navigation(self):
+        Animation.cancel_all(self.image_widget)
+        self.image_widget.opacity = 1
+        self.reset_image_cycle_timer()
+
+    def load_next_image(self, animation=None, widget=None, force=False, manual=False):
         """
         Load the next image in the list and fade it in.
         """
         if not self.images:
             return
+
+        if manual:
+            self.prepare_manual_navigation()
 
         if (animation and widget) or force:
             self.index = (self.index + 1) % len(self.images)
@@ -532,12 +557,15 @@ class PhotoFrameApp(App):
             anim = Animation(opacity=1, duration=1.5)
             anim.start(self.image_widget)
 
-    def load_previous_image(self):
+    def load_previous_image(self, manual=False):
         """
         Load the previous image in the list and fade it in.
         """
         if not self.images:
             return
+
+        if manual:
+            self.prepare_manual_navigation()
 
         self.index = (self.index - 1) % len(self.images)
         self.image_widget.source = self.images[self.index]
