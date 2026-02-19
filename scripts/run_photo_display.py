@@ -21,7 +21,8 @@ from kivy.uix.label import Label
 from sync_photos import sync_photos
 
 # Setup logging
-logging.basicConfig(filename='app.log', level=logging.INFO,
+LOG_PATH = os.path.join(os.path.dirname(__file__), 'app.log')
+logging.basicConfig(filename=LOG_PATH, level=logging.INFO,
                     format='%(asctime)s:%(levelname)s:%(message)s')
 
 
@@ -57,10 +58,14 @@ class TapImage(Image):
 
         if local_x < self.width * self.edge_threshold:  # Touched on the left edge
             app = App.get_running_app()
+            if app:
+                app.record_touch_navigation('left', local_x, self.width)
             app.load_previous_image(manual=True)
             handled = True
         elif local_x > self.width * (1 - self.edge_threshold):  # Touched on the right edge
             app = App.get_running_app()
+            if app:
+                app.record_touch_navigation('right', local_x, self.width)
             app.load_next_image(force=True, manual=True)
             handled = True
 
@@ -87,6 +92,18 @@ class InfoPanel(BoxLayout):
 
 class PhotoFrameApp(App):
 
+    def _current_image_name(self):
+        if not self.images:
+            return 'none'
+        return os.path.basename(self.images[self.index])
+
+    def _log_nav(self, event, **details):
+        detail_str = ' '.join(f"{key}={value}" for key, value in details.items())
+        logging.info("NAV %s idx=%s img=%s %s", event, self.index, self._current_image_name(), detail_str)
+
+    def record_touch_navigation(self, side, local_x, width):
+        self._log_nav('touch', side=side, local_x=round(local_x, 1), width=round(width, 1))
+
     def build(self):
         """Setup our Kivy app and return the root widget.
 
@@ -104,6 +121,7 @@ class PhotoFrameApp(App):
         self.sync_in_progress = False
         self.weather_request_in_progress = False
         self.manual_nav_pause_until = 0.0
+        self.forward_block_until = 0.0
         self.photos_path = self.resolve_photos_path(self.local_config.get('local_folder'))
         os.makedirs(self.photos_path, exist_ok=True)
         self.images = self.load_images(self.photos_path)
@@ -540,8 +558,10 @@ class PhotoFrameApp(App):
             return
 
         if time.monotonic() < self.manual_nav_pause_until:
+            self._log_nav('auto-skip', reason='manual-pause')
             return
 
+        self._log_nav('auto-next')
         self.load_next_image(force=True)
 
     def reset_image_cycle_timer(self):
@@ -550,11 +570,12 @@ class PhotoFrameApp(App):
         self.image_cycle_event = Clock.schedule_interval(self.update_image, self.image_cycle_seconds)
 
     def prepare_manual_navigation(self):
-        self.manual_nav_pause_until = time.monotonic() + 0.8
+        self.manual_nav_pause_until = time.monotonic() + 2.0
 
         Animation.cancel_all(self.image_widget)
         self.image_widget.opacity = 1
         self.reset_image_cycle_timer()
+        self._log_nav('manual-prepare', pause_until=round(self.manual_nav_pause_until, 3))
 
     def load_next_image(self, animation=None, widget=None, force=False, manual=False, transition_id=None):
         """
@@ -568,6 +589,14 @@ class PhotoFrameApp(App):
 
         if manual:
             self.prepare_manual_navigation()
+            self._log_nav('manual-next')
+        elif time.monotonic() < self.manual_nav_pause_until:
+            self._log_nav('next-blocked', reason='manual-pause')
+            return
+
+        if time.monotonic() < self.forward_block_until:
+            self._log_nav('next-blocked', reason='forward-lock')
+            return
 
         self.index = (self.index + 1) % len(self.images)
         self.image_widget.source = self.images[self.index]
@@ -580,6 +609,7 @@ class PhotoFrameApp(App):
         self.image_widget.opacity = 0
         anim = Animation(opacity=1, duration=1.5)
         anim.start(self.image_widget)
+        self._log_nav('next-applied', manual=manual, force=force)
 
     def load_previous_image(self, manual=False):
         """
@@ -590,18 +620,22 @@ class PhotoFrameApp(App):
 
         if manual:
             self.prepare_manual_navigation()
+            self.forward_block_until = time.monotonic() + 1.2
+            self._log_nav('manual-prev', forward_block_until=round(self.forward_block_until, 3))
 
         self.index = (self.index - 1) % len(self.images)
         self.image_widget.source = self.images[self.index]
 
         if manual:
             self.image_widget.opacity = 1
+            self._log_nav('prev-applied', manual=True)
             return
 
         Animation.cancel_all(self.image_widget)
         self.image_widget.opacity = 0
         anim = Animation(opacity=1, duration=1.5)
         anim.start(self.image_widget)
+        self._log_nav('prev-applied', manual=False)
 
     def load_images(self, path: str):
         """
