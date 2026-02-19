@@ -60,14 +60,20 @@ class TapImage(Image):
             app = App.get_running_app()
             if app:
                 app.record_touch_navigation('left', local_x, self.width)
-            app.load_previous_image(manual=True)
-            handled = True
+                if app.should_ignore_manual_side('left'):
+                    return True
+                app.register_manual_side('left')
+                app.load_previous_image(manual=True)
+                handled = True
         elif local_x > self.width * (1 - self.edge_threshold):  # Touched on the right edge
             app = App.get_running_app()
             if app:
                 app.record_touch_navigation('right', local_x, self.width)
-            app.load_next_image(force=True, manual=True)
-            handled = True
+                if app.should_ignore_manual_side('right'):
+                    return True
+                app.register_manual_side('right')
+                app.load_next_image(force=True, manual=True)
+                handled = True
 
         if handled:
             return True
@@ -104,6 +110,21 @@ class PhotoFrameApp(App):
     def record_touch_navigation(self, side, local_x, width):
         self._log_nav('touch', side=side, local_x=round(local_x, 1), width=round(width, 1))
 
+    def should_ignore_manual_side(self, side):
+        if (
+            self.last_manual_side is not None
+            and side != self.last_manual_side
+            and (time.monotonic() - self.last_manual_side_time) < 1.0
+        ):
+            self._log_nav('touch-ignored', side=side, reason='opposite-side-bounce')
+            return True
+
+        return False
+
+    def register_manual_side(self, side):
+        self.last_manual_side = side
+        self.last_manual_side_time = time.monotonic()
+
     def build(self):
         """Setup our Kivy app and return the root widget.
 
@@ -122,6 +143,8 @@ class PhotoFrameApp(App):
         self.weather_request_in_progress = False
         self.manual_nav_pause_until = 0.0
         self.forward_block_until = 0.0
+        self.last_manual_side = None
+        self.last_manual_side_time = 0.0
         self.photos_path = self.resolve_photos_path(self.local_config.get('local_folder'))
         os.makedirs(self.photos_path, exist_ok=True)
         self.images = self.load_images(self.photos_path)
@@ -587,15 +610,15 @@ class PhotoFrameApp(App):
         if not (manual or force or (animation and widget)):
             return
 
+        if time.monotonic() < self.forward_block_until:
+            self._log_nav('next-blocked', reason='forward-lock')
+            return
+
         if manual:
             self.prepare_manual_navigation()
             self._log_nav('manual-next')
         elif time.monotonic() < self.manual_nav_pause_until:
             self._log_nav('next-blocked', reason='manual-pause')
-            return
-
-        if time.monotonic() < self.forward_block_until:
-            self._log_nav('next-blocked', reason='forward-lock')
             return
 
         self.index = (self.index + 1) % len(self.images)
