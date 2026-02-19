@@ -1,8 +1,8 @@
 import os
 import json
+import time
 import requests
-from datetime import datetime
-from requests.exceptions import RequestException, Timeout, ConnectionError
+from requests.exceptions import RequestException, Timeout
 from pathlib import Path
 from io import BytesIO
 from PIL import Image
@@ -13,9 +13,6 @@ register_heif_opener()
 
 ABSOLUTE_PATH = os.path.dirname(__file__)
 LOCAL_CONFIG = os.path.join(ABSOLUTE_PATH, "config.json")
-
-# Absolute path to the photos directory
-PHOTOS_DIR = os.path.join(os.path.dirname(__file__), '..', 'photos')
 
 # HTTP request timeout in seconds
 REQUEST_TIMEOUT = 10
@@ -34,6 +31,41 @@ def validate_config(config):
     missing_keys = [key for key in required_keys if not config.get(key)]
     if missing_keys:
         raise ValueError(f"Missing required configuration keys: {', '.join(missing_keys)}")
+
+
+def resolve_photos_path(local_folder):
+    """Resolve local folder to an absolute path.
+
+    Relative paths are resolved from the scripts directory.
+    """
+    if os.path.isabs(local_folder):
+        return local_folder
+    return os.path.normpath(os.path.join(ABSOLUTE_PATH, local_folder))
+
+
+def convert_to_jpeg(image_bytes, output_path):
+    """Convert image bytes to JPEG and save to output_path."""
+    with Image.open(BytesIO(image_bytes)) as image:
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
+        image.save(output_path, 'JPEG', quality=95)
+
+
+def get_with_retries(url, headers, timeout, retries=3):
+    """Perform an HTTP GET with retry support for transient failures."""
+    last_error = None
+    for attempt in range(retries):
+        try:
+            return requests.get(url, headers=headers, timeout=timeout)
+        except (RequestException, Timeout) as e:
+            last_error = e
+            if attempt < retries - 1:
+                time.sleep(1.5 ** attempt)
+
+    if last_error is not None:
+        raise last_error
+
+    raise RequestException("GET request failed without exception details")
 
 
 def sync_photos():
@@ -60,10 +92,11 @@ def sync_photos():
 
         # Fetch photos from Immich album with timeout
         try:
-            response = requests.get(
-                f"{immich_server_url}/api/albums/{album_id}",
+            response = get_with_retries(
+                url=f"{immich_server_url}/api/albums/{album_id}",
                 headers=headers,
-                timeout=REQUEST_TIMEOUT
+                timeout=REQUEST_TIMEOUT,
+                retries=3
             )
             response.raise_for_status()
             album = response.json()
@@ -80,7 +113,7 @@ def sync_photos():
         print(f"Found {len(photos)} photos.")
 
         # Create local photos directory if it doesn't exist
-        photos_path = os.path.join(ABSOLUTE_PATH, local_folder)
+        photos_path = resolve_photos_path(local_folder)
         os.makedirs(photos_path, exist_ok=True)
 
         # Download photos
@@ -98,60 +131,38 @@ def sync_photos():
 
             if not os.path.exists(local_path):
                 print(f"Downloading {filename_jpg}...")
-                # First save the original file to disk
-                temp_ext = '.heic' if Path(filename).suffix.lower() in ['.heic', '.heif'] else Path(filename).suffix
-                temp_path = os.path.join(photos_path, Path(filename).stem + temp_ext)
-
                 try:
-                    download_response = requests.get(
-                        download_url,
+                    download_response = get_with_retries(
+                        url=download_url,
                         headers=headers,
-                        timeout=REQUEST_TIMEOUT
+                        timeout=REQUEST_TIMEOUT,
+                        retries=3
                     )
-                    if download_response.status_code == 200:
-                        with open(temp_path, 'wb') as file:
+                    download_response.raise_for_status()
+
+                    file_ext = Path(filename).suffix.lower()
+                    if file_ext in ['.jpg', '.jpeg']:
+                        with open(local_path, 'wb') as file:
                             file.write(download_response.content)
-
-                        # Check if the downloaded file is HEIC and convert to JPG
-                        file_ext = Path(filename).suffix.lower()
-
-                        if file_ext in ['.heic', '.heif']:
-                            print(f"Converting {filename} to JPG...")
-                            image = Image.open(temp_path)
-                            # Convert RGBA to RGB for JPG format
-                            if image.mode in ('RGBA', 'LA', 'P'):
-                                image = image.convert('RGB')
-                            # Save as JPG
-                            with open(local_path, 'wb') as file:
-                                image.save(file, 'JPEG', quality=95)
-                            image.close()
-                            # Delete the temporary HEIC file
-                            os.remove(temp_path)
-                            print(f"Successfully converted and saved {filename_jpg}")
-                        else:
-                            # Already a JPEG or other format, just rename if needed
-                            if temp_path != local_path:
-                                os.rename(temp_path, local_path)
-                            print(f"Successfully downloaded {filename_jpg}")
-                        downloaded_count += 1
+                        print(f"Successfully downloaded {filename_jpg}")
                     else:
-                        print(f"Failed to download {filename_jpg}: HTTP {download_response.status_code}")
-                        # Clean up temp file if it was created
-                        if os.path.exists(temp_path):
-                            os.remove(temp_path)
+                        print(f"Converting {filename} to JPG...")
+                        convert_to_jpeg(download_response.content, local_path)
+                        print(f"Successfully converted and saved {filename_jpg}")
+
+                    downloaded_count += 1
                 except (RequestException, Timeout) as e:
                     print(f"Error downloading {filename_jpg}: {e}")
-                    if os.path.exists(temp_path):
-                        os.remove(temp_path)
                     continue
                 except Exception as e:
                     print(f"Error processing {filename_jpg}: {e}")
-                    if os.path.exists(temp_path):
-                        os.remove(temp_path)
                     continue
 
         # Delete photos not in the album
-        existing_files = os.listdir(photos_path)
+        existing_files = [
+            filename for filename in os.listdir(photos_path)
+            if os.path.isfile(os.path.join(photos_path, filename))
+        ]
         # Use the converted JPG filenames for comparison
         photo_filenames = [Path(photo['originalFileName']).stem + '.jpg' for photo in photos]
 

@@ -1,7 +1,9 @@
 #!/bin/bash
 
-# Activate the virtual environment and sync our photos
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-source ~/Digital-Photo-Frame/venv/bin/activate
-python ~/Digital-Photo-Frame/scripts/sync_photos.py
+# Activate the virtual environment and sync our photos
+source "${SCRIPT_DIR}/../venv/bin/activate"
+python "${SCRIPT_DIR}/sync_photos.py"
 deactivate

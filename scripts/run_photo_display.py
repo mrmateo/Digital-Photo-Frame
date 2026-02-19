@@ -2,16 +2,21 @@ from datetime import datetime
 import json
 import logging
 import os
+import subprocess
+import time
+from threading import Thread
 import requests
 from kivy.animation import Animation
 from kivy.app import App
 from kivy.clock import Clock
 from kivy.config import Config
 from kivy.core.window import Window
+from kivy.graphics import Color, RoundedRectangle
+from kivy.metrics import dp
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
-from kivy.uix.image import Image
 from kivy.uix.floatlayout import FloatLayout
+from kivy.uix.image import Image
 from kivy.uix.label import Label
 from sync_photos import sync_photos
 
@@ -54,6 +59,21 @@ class TapImage(Image):
         return super(TapImage, self).on_touch_down(touch)
 
 
+class InfoPanel(BoxLayout):
+
+    def __init__(self, **kwargs):
+        super(InfoPanel, self).__init__(**kwargs)
+        with self.canvas.before:
+            Color(0.04, 0.06, 0.10, 0.45)
+            self._panel_bg = RoundedRectangle(radius=[dp(18)])
+
+        self.bind(pos=self._update_panel_bg, size=self._update_panel_bg)
+
+    def _update_panel_bg(self, *_):
+        self._panel_bg.pos = self.pos
+        self._panel_bg.size = self.size
+
+
 class PhotoFrameApp(App):
 
     def build(self):
@@ -70,8 +90,11 @@ class PhotoFrameApp(App):
         self.local_config = self.load_config()  # Load our local configuration
         self.apply_settings()  # Configure Kivy with defined settings
         self.index = 0
-        photos_path = os.path.join(os.path.dirname(__file__), '../photos')
-        self.images = self.load_images(photos_path)
+        self.sync_in_progress = False
+        self.weather_request_in_progress = False
+        self.photos_path = self.resolve_photos_path(self.local_config.get('local_folder'))
+        os.makedirs(self.photos_path, exist_ok=True)
+        self.images = self.load_images(self.photos_path)
         self.toast = None
 
         if not self.images:
@@ -89,29 +112,79 @@ class PhotoFrameApp(App):
         # Schedule the check for new images every hour (3600 seconds)
         Clock.schedule_interval(self.check_for_new_images, 3600)
 
-        # Build our weather widget
-        self.weather_label = Label(
-            text=self.fetch_weather_data(),
-            font_size='17sp',
-            color=[1, 1, 1, 1],  # White color
+        # Build our information panel (time, date, weather)
+        self.info_panel = InfoPanel(
+            orientation='vertical',
             size_hint=(None, None),
-            pos_hint={'x': 0.06, 'y': 0.08},  # Adjust 'top' value as needed
-            halign='left'
+            size=(dp(360), dp(150)),
+            pos_hint={'x': 0.04, 'y': 0.02},
+            padding=(dp(16), dp(12), dp(16), dp(12)),
+            spacing=dp(4)
         )
-        layout.add_widget(self.weather_label)
-        Clock.schedule_interval(self.update_weather, 3600)  # Update weather every hour
+        self.weather_icons_dir = os.path.join(os.path.dirname(__file__), 'assets', 'weather')
 
-        # Build our clock widget
         self.clock_label = Label(
             text=self.get_current_time(),
-            font_size='45sp',
-            color=[1, 1, 1, 1],  # White color
-            size_hint=(None, None),
-            pos_hint={'x': 0.06, 'y': 0.01},
-            halign='left'
+            font_size='50sp',
+            color=[1, 1, 1, 1],
+            bold=True,
+            size_hint=(1, None),
+            height=dp(68),
+            halign='left',
+            valign='middle'
         )
-        layout.add_widget(self.clock_label)
-        Clock.schedule_interval(self.update_clock, 10)  # Update clock every 10 seconds
+        self.clock_label.bind(size=self._sync_text_size)
+
+        self.date_label = Label(
+            text=self.get_current_date(),
+            font_size='18sp',
+            color=[0.86, 0.90, 0.96, 1],
+            size_hint=(1, None),
+            height=dp(28),
+            halign='left',
+            valign='middle'
+        )
+        self.date_label.bind(size=self._sync_text_size)
+
+        self.weather_row = BoxLayout(
+            orientation='horizontal',
+            size_hint=(1, None),
+            height=dp(40),
+            spacing=dp(10)
+        )
+
+        self.weather_icon = Image(
+            source=self.get_weather_icon_path(None),
+            size_hint=(None, None),
+            size=(dp(30), dp(30)),
+            fit_mode='contain'
+        )
+
+        self.weather_label = Label(
+            text='Weather loading...',
+            font_size='22sp',
+            color=[0.95, 0.99, 1, 1],
+            size_hint=(1, None),
+            height=dp(40),
+            halign='left',
+            valign='middle'
+        )
+        self.weather_label.bind(size=self._sync_text_size)
+
+        self.weather_row.add_widget(self.weather_icon)
+        self.weather_row.add_widget(self.weather_label)
+
+        self.info_panel.add_widget(self.clock_label)
+        self.info_panel.add_widget(self.date_label)
+        self.info_panel.add_widget(self.weather_row)
+        layout.add_widget(self.info_panel)
+
+        self.update_info_panel_layout()
+        Window.bind(size=self.on_window_resize)
+
+        Clock.schedule_interval(self.update_clock, 1)  # Update clock every second
+        Clock.schedule_interval(self.update_weather, 3600)  # Update weather every hour
+        Clock.schedule_once(self.update_weather, 0)  # Load weather asynchronously
 
         # Build our refresh widget
         button_path = os.path.join(os.path.dirname(__file__), 'assets')
@@ -169,6 +242,56 @@ class PhotoFrameApp(App):
 
         return config
 
+    def resolve_photos_path(self, local_folder):
+        default_path = os.path.join(os.path.dirname(__file__), '../photos')
+        if not local_folder:
+            return os.path.normpath(default_path)
+
+        if os.path.isabs(local_folder):
+            return local_folder
+
+        return os.path.normpath(os.path.join(os.path.dirname(__file__), local_folder))
+
+    def _sync_text_size(self, label, _size):
+        label.text_size = (label.width, None)
+
+    def on_window_resize(self, *_):
+        self.update_info_panel_layout()
+
+    def update_info_panel_layout(self):
+        is_portrait = Window.height >= Window.width
+
+        if is_portrait:
+            panel_width = max(dp(360), min(dp(660), Window.width * 0.88))
+            panel_height = dp(205)
+            self.info_panel.pos_hint = {'center_x': 0.5, 'y': 0.03}
+            self.info_panel.padding = (dp(20), dp(14), dp(20), dp(14))
+            self.info_panel.spacing = dp(8)
+            self.clock_label.font_size = '64sp'
+            self.date_label.font_size = '24sp'
+            self.weather_label.font_size = '24sp'
+            self.clock_label.height = dp(86)
+            self.date_label.height = dp(34)
+            self.weather_row.height = dp(52)
+            self.weather_label.height = dp(52)
+            self.weather_icon.size = (dp(36), dp(36))
+        else:
+            panel_width = max(dp(280), min(dp(460), Window.width * 0.56))
+            panel_height = dp(160)
+            self.info_panel.pos_hint = {'x': 0.04, 'y': 0.02}
+            self.info_panel.padding = (dp(16), dp(12), dp(16), dp(12))
+            self.info_panel.spacing = dp(4)
+            self.clock_label.font_size = '50sp'
+            self.date_label.font_size = '18sp'
+            self.weather_label.font_size = '21sp'
+            self.clock_label.height = dp(68)
+            self.date_label.height = dp(28)
+            self.weather_row.height = dp(42)
+            self.weather_label.height = dp(42)
+            self.weather_icon.size = (dp(30), dp(30))
+
+        self.info_panel.size = (panel_width, panel_height)
+
     def apply_settings(self):
         """
         Configure Kivy to run in borderless fullscreen mode.
@@ -184,103 +307,189 @@ class PhotoFrameApp(App):
         Safely shut down the Raspberry Pi.
         """
         logging.info("Shutting down...")
-        os.system('sudo shutdown now')
+        try:
+            subprocess.run(['sudo', 'shutdown', 'now'], check=True)
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            logging.error("Error while trying to power off: %s", e)
+            self.show_toast("Failed to power off.")
 
-    def get_weather_icon(self, condition: str) -> str:
-        """
-        Map weather condition to a Unicode weather icon.
-
-        Args:
-            condition: Weather condition string from Home Assistant.
-
-        Returns:
-            str: Unicode weather icon.
-        """
+    def resolve_weather_icon_key(self, condition: str | None) -> str:
+        """Map weather condition to a weather icon key."""
         condition_lower = condition.lower() if condition else ''
 
-        icons = {
-            'sunny': '☀️',
-            'clear': '☀️',
-            'cloudy': '☁️',
-            'partlycloudy': '⛅',
-            'mostlycloudy': '☁️',
-            'overcast': '☁️',
-            'rain': '🌧️',
-            'lightrain': '🌦️',
-            'heavyrain': '⛈️',
-            'showers': '🌧️',
-            'drizzle': '🌦️',
-            'thunderstorm': '⚡',
-            'thunder': '⚡',
-            'snow': '❄️',
-            'lightsnow': '❄️',
-            'heavysnow': '❄️',
-            'blizzard': '❄️',
-            'fog': '🌫️',
-            'haze': '🌫️',
-            'windy': '💨',
-            'rainandsnow': '🌧️❄️',
+        icon_keys = {
+            'sunny': 'sun',
+            'clear': 'sun',
+            'cloudy': 'cloud',
+            'partlycloudy': 'partly_cloudy',
+            'mostlycloudy': 'cloud',
+            'overcast': 'cloud',
+            'rain': 'rain',
+            'lightrain': 'rain',
+            'heavyrain': 'heavy_rain',
+            'showers': 'rain',
+            'drizzle': 'rain',
+            'thunderstorm': 'storm',
+            'thunder': 'storm',
+            'snow': 'snow',
+            'lightsnow': 'snow',
+            'heavysnow': 'snow',
+            'blizzard': 'snow',
+            'fog': 'fog',
+            'haze': 'fog',
+            'windy': 'wind',
+            'rainandsnow': 'mix',
         }
 
-        # Check for exact match first
-        if condition_lower in icons:
-            return icons[condition_lower]
+        if condition_lower in icon_keys:
+            return icon_keys[condition_lower]
 
-        # Check for partial matches
-        for key, icon in icons.items():
+        for key, icon_key in icon_keys.items():
             if key in condition_lower:
-                return icon
+                return icon_key
 
-        # Default icon
-        return '.weather'
+        return 'unknown'
 
-    def fetch_weather_data(self) -> str:
+    def get_weather_icon_path(self, condition: str | None) -> str:
+        icon_key = self.resolve_weather_icon_key(condition)
+        icon_path = os.path.join(self.weather_icons_dir, f'{icon_key}.png')
+
+        if os.path.exists(icon_path):
+            return icon_path
+
+        return os.path.join(self.weather_icons_dir, 'unknown.png')
+
+    def format_weather_condition(self, condition: str) -> str:
+        """Format Home Assistant condition strings for display."""
+        if not condition:
+            return 'Unknown'
+
+        normalized = condition.lower().replace('-', '').replace('_', '')
+        friendly_names = {
+            'partlycloudy': 'Partly Cloudy',
+            'mostlycloudy': 'Mostly Cloudy',
+            'lightrain': 'Light Rain',
+            'heavyrain': 'Heavy Rain',
+            'thunderstorm': 'Thunderstorm',
+            'lightsnow': 'Light Snow',
+            'heavysnow': 'Heavy Snow',
+            'rainandsnow': 'Rain and Snow',
+        }
+
+        if normalized in friendly_names:
+            return friendly_names[normalized]
+
+        return condition.replace('_', ' ').replace('-', ' ').title()
+
+    def fetch_weather_data(self) -> tuple[str, str]:
         """
         Fetch weather data from local Home Assistant instance.
 
         Returns:
-            str: Weather data formatted as "icon temperature | weather".
+            tuple[str, str]: Weather text and weather icon path.
         """
-        api_key = self.local_config['weather_api_key']
-        url = self.local_config['home_assistant_weather_url']
+        api_key = self.local_config.get('weather_api_key')
+        url = self.local_config.get('home_assistant_weather_url')
 
-        try:
-            response = requests.get(url, headers={"Authorization": f"Bearer {api_key}"})
-            response.raise_for_status()
-            data = response.json()
+        if not api_key or not url:
+            logging.warning("Weather config missing weather_api_key or home_assistant_weather_url")
+            return "Weather unavailable", self.get_weather_icon_path(None)
 
-            temperature = round(data['attributes']['temperature'])
-            weather = data['state'].title()
-            icon = self.get_weather_icon(weather)
+        retries = 3
+        timeout = 8
+        last_error = None
 
-            return f"{icon} {temperature}°F | {weather}"
-        except Exception as e:
-            logging.error("Error fetching weather data: %s", e)
-            return "N/A"
+        for attempt in range(retries):
+            try:
+                response = requests.get(
+                    url,
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    timeout=timeout
+                )
+                response.raise_for_status()
+                data = response.json()
+
+                temperature = round(data['attributes']['temperature'])
+                condition = data['state']
+                weather = self.format_weather_condition(condition)
+                weather_icon_path = self.get_weather_icon_path(condition)
+
+                return f"{temperature} F  |  {weather}", weather_icon_path
+            except requests.RequestException as e:
+                last_error = e
+                if attempt < retries - 1:
+                    time.sleep(1.5 ** attempt)
+            except (KeyError, TypeError, ValueError) as e:
+                logging.error("Unexpected weather payload: %s", e)
+                return "Weather unavailable", self.get_weather_icon_path(None)
+
+        logging.error("Error fetching weather data: %s", last_error)
+        return "Weather unavailable", self.get_weather_icon_path(None)
 
     def get_current_time(self):
         current_time = datetime.now()
         formatted_time = current_time.strftime('%I:%M %p')
         return formatted_time
 
+    def get_current_date(self):
+        current_date = datetime.now()
+        return current_date.strftime('%A, %b %d')
+
     def update_clock(self, dt):
         self.clock_label.text = self.get_current_time()
+        self.date_label.text = self.get_current_date()
 
-    def update_weather(self, dt):
-        self.weather_label.text = self.fetch_weather_data()
+    def update_weather(self, dt=None):
+        if self.weather_request_in_progress:
+            return
 
-    def check_for_new_images(self, dt):
+        self.weather_request_in_progress = True
+        Thread(target=self._update_weather_worker, daemon=True).start()
+
+    def _update_weather_worker(self):
+        try:
+            weather_text, icon_path = self.fetch_weather_data()
+        except Exception as e:
+            logging.error("Unhandled error while fetching weather data: %s", e)
+            weather_text = "Weather unavailable"
+            icon_path = self.get_weather_icon_path(None)
+        Clock.schedule_once(lambda dt: self._apply_weather_update(weather_text, icon_path), 0)
+
+    def _apply_weather_update(self, weather_text, icon_path):
+        self.weather_label.text = weather_text
+        if self.weather_icon.source != icon_path:
+            self.weather_icon.source = icon_path
+            self.weather_icon.reload()
+        self.weather_request_in_progress = False
+
+    def check_for_new_images(self, dt=None):
         """
         Check for new images in the photos directory and reload the images if new images are found.
         """
+        if self.sync_in_progress:
+            return
+
+        self.sync_in_progress = True
+        Thread(target=self._sync_images_worker, daemon=True).start()
+
+    def _sync_images_worker(self):
+        sync_error = None
         try:
             sync_photos()
         except Exception as e:
-            self.show_toast("Error syncing photos.")
             logging.error("Error syncing photos: %s", e)
+            sync_error = e
+
+        Clock.schedule_once(lambda dt: self._apply_synced_images(sync_error), 0)
+
+    def _apply_synced_images(self, sync_error=None):
+        self.sync_in_progress = False
+
+        if sync_error:
+            self.show_toast("Error syncing photos.")
             return
 
-        new_images = self.load_images(os.path.join(os.path.dirname(__file__), '../photos'))
+        new_images = self.load_images(self.photos_path)
 
         if new_images != self.images:
             self.show_toast("Images updated. Reloading...")
@@ -303,6 +512,8 @@ class PhotoFrameApp(App):
         """
         Update the image being displayed by fading the current image out and vice versa.
         """
+        if not self.images:
+            return
 
         anim = Animation(opacity=0, duration=1.5)
         anim.bind(on_complete=self.load_next_image)
@@ -312,6 +523,9 @@ class PhotoFrameApp(App):
         """
         Load the next image in the list and fade it in.
         """
+        if not self.images:
+            return
+
         if (animation and widget) or force:
             self.index = (self.index + 1) % len(self.images)
             self.image_widget.source = self.images[self.index]
@@ -322,6 +536,9 @@ class PhotoFrameApp(App):
         """
         Load the previous image in the list and fade it in.
         """
+        if not self.images:
+            return
+
         self.index = (self.index - 1) % len(self.images)
         self.image_widget.source = self.images[self.index]
         anim = Animation(opacity=1, duration=1.5)
@@ -338,8 +555,8 @@ class PhotoFrameApp(App):
             List: List of images in our photos directory.
         """
         images = []
-        for file in os.scandir(path):
-            if file.is_file() and (file.name.endswith('.jpg') or file.name.endswith('.png')):
+        for file in sorted(os.scandir(path), key=lambda entry: entry.name.lower()):
+            if file.is_file() and file.name.lower().endswith(('.jpg', '.jpeg', '.png')):
                 full_path = os.path.join(path, file.name)
                 mod_time = os.path.getmtime(full_path)
 
