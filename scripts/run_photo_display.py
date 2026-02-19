@@ -92,6 +92,8 @@ class PhotoFrameApp(App):
         self.index = 0
         self.sync_in_progress = False
         self.weather_request_in_progress = False
+        self.transition_seq = 0
+        self.pending_auto_transition_id = None
         self.photos_path = self.resolve_photos_path(self.local_config.get('local_folder'))
         os.makedirs(self.photos_path, exist_ok=True)
         self.images = self.load_images(self.photos_path)
@@ -527,8 +529,15 @@ class PhotoFrameApp(App):
         if not self.images:
             return
 
+        self.transition_seq += 1
+        transition_id = self.transition_seq
+        self.pending_auto_transition_id = transition_id
+
         anim = Animation(opacity=0, duration=1.5)
-        anim.bind(on_complete=self.load_next_image)
+        anim.bind(
+            on_complete=lambda animation, widget, active_id=transition_id:
+            self.load_next_image(animation=animation, widget=widget, transition_id=active_id)
+        )
         anim.start(self.image_widget)
 
     def reset_image_cycle_timer(self):
@@ -537,11 +546,13 @@ class PhotoFrameApp(App):
         self.image_cycle_event = Clock.schedule_interval(self.update_image, self.image_cycle_seconds)
 
     def prepare_manual_navigation(self):
+        self.transition_seq += 1
+        self.pending_auto_transition_id = None
         Animation.cancel_all(self.image_widget)
         self.image_widget.opacity = 1
         self.reset_image_cycle_timer()
 
-    def load_next_image(self, animation=None, widget=None, force=False, manual=False):
+    def load_next_image(self, animation=None, widget=None, force=False, manual=False, transition_id=None):
         """
         Load the next image in the list and fade it in.
         """
@@ -550,6 +561,11 @@ class PhotoFrameApp(App):
 
         if manual:
             self.prepare_manual_navigation()
+
+        if animation and widget:
+            if transition_id is None or transition_id != self.pending_auto_transition_id:
+                return
+            self.pending_auto_transition_id = None
 
         if (animation and widget) or force:
             self.index = (self.index + 1) % len(self.images)
