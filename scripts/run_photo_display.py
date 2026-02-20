@@ -301,13 +301,13 @@ class PhotoFrameApp(App):
         if is_portrait:
             panel_width = max(dp(420), min(dp(760), Window.width * 0.92))
             self.info_panel.pos_hint = {'center_x': 0.5, 'y': 0.03}
-            self.info_panel.padding = (dp(22), dp(16), dp(22), dp(16))
-            self.info_panel.spacing = dp(10)
+            self.info_panel.padding = (dp(22), dp(12), dp(22), dp(12))
+            self.info_panel.spacing = dp(7)
             self.clock_label.font_size = '68sp'
             self.date_label.font_size = '26sp'
             self.weather_label.font_size = '30sp'
             self.clock_label.height = dp(92)
-            self.date_label.height = dp(38)
+            self.date_label.height = dp(30)
             self.weather_row.height = dp(92)
             self.weather_label.height = dp(92)
             self.weather_icon.size = (dp(48), dp(48))
@@ -317,13 +317,13 @@ class PhotoFrameApp(App):
         else:
             panel_width = max(dp(340), min(dp(560), Window.width * 0.66))
             self.info_panel.pos_hint = {'x': 0.04, 'y': 0.02}
-            self.info_panel.padding = (dp(18), dp(14), dp(18), dp(14))
-            self.info_panel.spacing = dp(6)
+            self.info_panel.padding = (dp(18), dp(10), dp(18), dp(10))
+            self.info_panel.spacing = dp(4)
             self.clock_label.font_size = '54sp'
             self.date_label.font_size = '20sp'
             self.weather_label.font_size = '26sp'
             self.clock_label.height = dp(74)
-            self.date_label.height = dp(32)
+            self.date_label.height = dp(24)
             self.weather_row.height = dp(80)
             self.weather_label.height = dp(80)
             self.weather_icon.size = (dp(42), dp(42))
