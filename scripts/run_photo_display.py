@@ -205,33 +205,33 @@ class PhotoFrameApp(App):
         self.weather_label.bind(size=self._sync_text_size)
 
         button_path = os.path.join(os.path.dirname(__file__), 'assets')
-        refresh_icon = os.path.join(button_path, 'refresh_icon.png')
-        power_icon = os.path.join(button_path, 'power_icon.png')
+        sync_icon = os.path.join(button_path, 'sync_icon.png')
+        shutdown_icon = os.path.join(button_path, 'shutdown_icon.png')
 
         self.weather_controls = BoxLayout(
             orientation='horizontal',
             size_hint=(None, None),
-            size=(dp(116), dp(44)),
+            size=(dp(124), dp(48)),
             spacing=dp(8),
             pos_hint={'center_y': 0.5}
         )
 
         self.refresh_button = Button(
-            background_normal=refresh_icon,
-            background_down=refresh_icon,
+            background_normal=sync_icon,
+            background_down=sync_icon,
             border=(0, 0, 0, 0),
             size_hint=(None, None),
-            size=(dp(44), dp(44)),
+            size=(dp(48), dp(48)),
             opacity=1
         )
         self.refresh_button.bind(on_press=self.check_for_new_images)
 
         self.power_button = Button(
-            background_normal=power_icon,
-            background_down=power_icon,
+            background_normal=shutdown_icon,
+            background_down=shutdown_icon,
             border=(0, 0, 0, 0),
             size_hint=(None, None),
-            size=(dp(44), dp(44)),
+            size=(dp(48), dp(48)),
             opacity=1
         )
         self.power_button.bind(on_press=self.power_off)
@@ -299,39 +299,48 @@ class PhotoFrameApp(App):
         is_portrait = Window.height >= Window.width
 
         if is_portrait:
-            panel_width = max(dp(360), min(dp(660), Window.width * 0.88))
-            panel_height = dp(205)
+            panel_width = max(dp(380), min(dp(700), Window.width * 0.90))
             self.info_panel.pos_hint = {'center_x': 0.5, 'y': 0.03}
-            self.info_panel.padding = (dp(20), dp(14), dp(20), dp(14))
-            self.info_panel.spacing = dp(8)
-            self.clock_label.font_size = '64sp'
-            self.date_label.font_size = '24sp'
-            self.weather_label.font_size = '28sp'
-            self.clock_label.height = dp(86)
-            self.date_label.height = dp(34)
-            self.weather_row.height = dp(64)
-            self.weather_label.height = dp(64)
-            self.weather_icon.size = (dp(40), dp(40))
-            self.weather_controls.size = (dp(132), dp(52))
-            self.refresh_button.size = (dp(52), dp(52))
-            self.power_button.size = (dp(52), dp(52))
+            self.info_panel.padding = (dp(22), dp(16), dp(22), dp(16))
+            self.info_panel.spacing = dp(10)
+            self.clock_label.font_size = '68sp'
+            self.date_label.font_size = '26sp'
+            self.weather_label.font_size = '30sp'
+            self.clock_label.height = dp(92)
+            self.date_label.height = dp(38)
+            self.weather_row.height = dp(70)
+            self.weather_label.height = dp(70)
+            self.weather_icon.size = (dp(44), dp(44))
+            self.weather_controls.size = (dp(140), dp(56))
+            self.refresh_button.size = (dp(56), dp(56))
+            self.power_button.size = (dp(56), dp(56))
         else:
-            panel_width = max(dp(280), min(dp(460), Window.width * 0.56))
-            panel_height = dp(160)
+            panel_width = max(dp(300), min(dp(500), Window.width * 0.60))
             self.info_panel.pos_hint = {'x': 0.04, 'y': 0.02}
-            self.info_panel.padding = (dp(16), dp(12), dp(16), dp(12))
-            self.info_panel.spacing = dp(4)
-            self.clock_label.font_size = '50sp'
-            self.date_label.font_size = '18sp'
-            self.weather_label.font_size = '24sp'
-            self.clock_label.height = dp(68)
-            self.date_label.height = dp(28)
-            self.weather_row.height = dp(50)
-            self.weather_label.height = dp(50)
-            self.weather_icon.size = (dp(34), dp(34))
-            self.weather_controls.size = (dp(112), dp(44))
-            self.refresh_button.size = (dp(44), dp(44))
-            self.power_button.size = (dp(44), dp(44))
+            self.info_panel.padding = (dp(18), dp(14), dp(18), dp(14))
+            self.info_panel.spacing = dp(6)
+            self.clock_label.font_size = '54sp'
+            self.date_label.font_size = '20sp'
+            self.weather_label.font_size = '26sp'
+            self.clock_label.height = dp(74)
+            self.date_label.height = dp(32)
+            self.weather_row.height = dp(56)
+            self.weather_label.height = dp(56)
+            self.weather_icon.size = (dp(38), dp(38))
+            self.weather_controls.size = (dp(124), dp(48))
+            self.refresh_button.size = (dp(48), dp(48))
+            self.power_button.size = (dp(48), dp(48))
+
+        # Keep vertical breathing room symmetric by sizing the panel from its
+        # row heights, spacing, and explicit top/bottom padding.
+        panel_height = (
+            self.clock_label.height
+            + self.date_label.height
+            + self.weather_row.height
+            + (self.info_panel.spacing * 2)
+            + self.info_panel.padding[1]
+            + self.info_panel.padding[3]
+        )
 
         self.info_panel.size = (panel_width, panel_height)
 
