@@ -36,6 +36,21 @@ Kivy-based application developed to run on a raspberry pi. Designed to display p
     python scripts/run_photo_display.py
     ```
 
+## Testing
+Run the automated test suite from the project root:
+
+```bash
+venv/bin/python -m unittest discover -s tests -v
+```
+
+Or use the helper script:
+
+```bash
+scripts/run_tests.sh
+```
+
+The tests cover photo sync behavior, weather/data formatting helpers, slideshow navigation logic, and API connectivity script behavior.
+
 ## Notes
 - The application requires an Immich server with an API key and album ID configured in `config.json`.
 - For new installations, ensure your Immich server is running and accessible from the Raspberry Pi.

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from datetime import datetime
 import json
 import logging
@@ -5,6 +7,7 @@ import os
 import subprocess
 import time
 from threading import Thread
+
 import requests
 from kivy.animation import Animation
 from kivy.app import App
@@ -24,11 +27,54 @@ from sync_photos import sync_photos
 logging.basicConfig(filename='app.log', level=logging.INFO,
                     format='%(asctime)s:%(levelname)s:%(message)s')
 
+IMAGE_CYCLE_SECONDS = 15
+HOURLY_INTERVAL_SECONDS = 3600
+WEATHER_TIMEOUT_SECONDS = 8
+WEATHER_RETRIES = 3
+FADE_DURATION_SECONDS = 1.5
+TOAST_DURATION_SECONDS = 5
+IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png')
+
+WEATHER_ICON_KEYS = {
+    'sunny': 'sun',
+    'clear': 'sun',
+    'cloudy': 'cloud',
+    'partlycloudy': 'partly_cloudy',
+    'mostlycloudy': 'cloud',
+    'overcast': 'cloud',
+    'rain': 'rain',
+    'lightrain': 'rain',
+    'heavyrain': 'heavy_rain',
+    'showers': 'rain',
+    'drizzle': 'rain',
+    'thunderstorm': 'storm',
+    'thunder': 'storm',
+    'snow': 'snow',
+    'lightsnow': 'snow',
+    'heavysnow': 'snow',
+    'blizzard': 'snow',
+    'fog': 'fog',
+    'haze': 'fog',
+    'windy': 'wind',
+    'rainandsnow': 'mix',
+}
+
+FRIENDLY_WEATHER_NAMES = {
+    'partlycloudy': 'Partly Cloudy',
+    'mostlycloudy': 'Mostly Cloudy',
+    'lightrain': 'Light Rain',
+    'heavyrain': 'Heavy Rain',
+    'thunderstorm': 'Thunderstorm',
+    'lightsnow': 'Light Snow',
+    'heavysnow': 'Heavy Snow',
+    'rainandsnow': 'Rain and Snow',
+}
+
 
 class TapImage(Image):
 
     def __init__(self, **kwargs):
-        super(TapImage, self).__init__(**kwargs)
+        super().__init__(**kwargs)
         self.last_touch_time = 0.0
         self.last_nav_side = None
         self.last_nav_time = 0.0
@@ -47,7 +93,7 @@ class TapImage(Image):
             bool: True if the touch event is handled, False otherwise.
         """
         if not self.collide_point(*touch.pos):
-            return super(TapImage, self).on_touch_down(touch)
+            return super().on_touch_down(touch)
 
         current_time = time.monotonic()
         if current_time - self.last_touch_time < self.touch_threshold:
@@ -62,7 +108,7 @@ class TapImage(Image):
             side = 'right'
 
         if not side:
-            return super(TapImage, self).on_touch_down(touch)
+            return super().on_touch_down(touch)
 
         if (
             self.last_nav_side is not None
@@ -80,17 +126,17 @@ class TapImage(Image):
             if side == 'left':
                 app.load_previous_image(manual=True)
             else:
-                app.load_next_image(force=True, manual=True)
+                app.load_next_image(manual=True)
 
             return True
 
-        return super(TapImage, self).on_touch_down(touch)
+        return super().on_touch_down(touch)
 
 
 class InfoPanel(BoxLayout):
 
     def __init__(self, **kwargs):
-        super(InfoPanel, self).__init__(**kwargs)
+        super().__init__(**kwargs)
         with self.canvas.before:
             Color(0.04, 0.06, 0.10, 0.45)
             self._panel_bg = RoundedRectangle(radius=[dp(18)])
@@ -105,16 +151,8 @@ class InfoPanel(BoxLayout):
 class PhotoFrameApp(App):
 
     def build(self):
-        """Setup our Kivy app and return the root widget.
+        """Set up the Kivy app and return the root widget."""
 
-        Raises:
-            Exception: If no images are found in the photos directory.
-
-        Returns:
-            Root widget of the Kivy app.
-        """
-
-        self.image_cache = {}  # Cache of images and their last modified time
         self.local_config = self.load_config()  # Load our local configuration
         self.apply_settings()  # Configure Kivy with defined settings
         self.index = 0
@@ -137,11 +175,11 @@ class PhotoFrameApp(App):
             logging.warning("No images found in the directory.")
 
         layout.add_widget(self.image_widget)
-        self.image_cycle_seconds = 15
+        self.image_cycle_seconds = IMAGE_CYCLE_SECONDS
         self.image_cycle_event = Clock.schedule_interval(self.update_image, self.image_cycle_seconds)
 
         # Schedule the check for new images every hour (3600 seconds)
-        Clock.schedule_interval(self.check_for_new_images, 3600)
+        Clock.schedule_interval(self.check_for_new_images, HOURLY_INTERVAL_SECONDS)
         Clock.schedule_once(self.check_for_new_images, 0)
 
         # Build our information panel (time, date, weather)
@@ -252,34 +290,35 @@ class PhotoFrameApp(App):
         Window.bind(size=self.on_window_resize)
 
         Clock.schedule_interval(self.update_clock, 1)  # Update clock every second
-        Clock.schedule_interval(self.update_weather, 3600)  # Update weather every hour
+        Clock.schedule_interval(self.update_weather, HOURLY_INTERVAL_SECONDS)  # Update weather every hour
         Clock.schedule_once(self.update_weather, 0)  # Load weather asynchronously
 
         return layout
 
-    def show_toast(self, message):
+    def show_toast(self, message: str) -> None:
         if not self.toast:
             self.toast = Label(size_hint=(None, None), font_size='20sp',
                                bold=True, pos_hint={'center_x': 0.5, 'center_y': 0.1})
-            App.get_running_app().root.add_widget(self.toast)
+            if self.root is not None:
+                self.root.add_widget(self.toast)
 
         self.toast.text = message
         self.toast.opacity = 1  # Make sure it's visible
 
-        anim = Animation(opacity=0, duration=5)
+        anim = Animation(opacity=0, duration=TOAST_DURATION_SECONDS)
         anim.bind(on_complete=lambda *x: setattr(self.toast, 'opacity', 0))
         anim.start(self.toast)
 
-    def load_config(self):
+    def load_config(self) -> dict:
         # Get the path to our config file
         config_path = os.path.join(os.path.dirname(__file__), 'config.json')
 
-        with open(config_path) as config_file:
+        with open(config_path, encoding='utf-8') as config_file:
             config = json.load(config_file)
 
         return config
 
-    def resolve_photos_path(self, local_folder):
+    def resolve_photos_path(self, local_folder: str | None) -> str:
         default_path = os.path.join(os.path.dirname(__file__), '../photos')
         if not local_folder:
             return os.path.normpath(default_path)
@@ -289,13 +328,13 @@ class PhotoFrameApp(App):
 
         return os.path.normpath(os.path.join(os.path.dirname(__file__), local_folder))
 
-    def _sync_text_size(self, label, _size):
+    def _sync_text_size(self, label, _size) -> None:
         label.text_size = (label.width, label.height)
 
-    def on_window_resize(self, *_):
+    def on_window_resize(self, *_args) -> None:
         self.update_info_panel_layout()
 
-    def update_info_panel_layout(self):
+    def update_info_panel_layout(self) -> None:
         is_portrait = Window.height >= Window.width
 
         if is_portrait:
@@ -344,7 +383,7 @@ class PhotoFrameApp(App):
 
         self.info_panel.size = (panel_width, panel_height)
 
-    def apply_settings(self):
+    def apply_settings(self) -> None:
         """
         Configure Kivy to run in borderless fullscreen mode.
         """
@@ -354,7 +393,7 @@ class PhotoFrameApp(App):
 
         Window.show_cursor = False
 
-    def power_off(self, instance):
+    def power_off(self, _instance) -> None:
         """
         Safely shut down the Raspberry Pi.
         """
@@ -369,34 +408,10 @@ class PhotoFrameApp(App):
         """Map weather condition to a weather icon key."""
         condition_lower = condition.lower() if condition else ''
 
-        icon_keys = {
-            'sunny': 'sun',
-            'clear': 'sun',
-            'cloudy': 'cloud',
-            'partlycloudy': 'partly_cloudy',
-            'mostlycloudy': 'cloud',
-            'overcast': 'cloud',
-            'rain': 'rain',
-            'lightrain': 'rain',
-            'heavyrain': 'heavy_rain',
-            'showers': 'rain',
-            'drizzle': 'rain',
-            'thunderstorm': 'storm',
-            'thunder': 'storm',
-            'snow': 'snow',
-            'lightsnow': 'snow',
-            'heavysnow': 'snow',
-            'blizzard': 'snow',
-            'fog': 'fog',
-            'haze': 'fog',
-            'windy': 'wind',
-            'rainandsnow': 'mix',
-        }
+        if condition_lower in WEATHER_ICON_KEYS:
+            return WEATHER_ICON_KEYS[condition_lower]
 
-        if condition_lower in icon_keys:
-            return icon_keys[condition_lower]
-
-        for key, icon_key in icon_keys.items():
+        for key, icon_key in WEATHER_ICON_KEYS.items():
             if key in condition_lower:
                 return icon_key
 
@@ -417,19 +432,9 @@ class PhotoFrameApp(App):
             return 'Unknown'
 
         normalized = condition.lower().replace('-', '').replace('_', '')
-        friendly_names = {
-            'partlycloudy': 'Partly Cloudy',
-            'mostlycloudy': 'Mostly Cloudy',
-            'lightrain': 'Light Rain',
-            'heavyrain': 'Heavy Rain',
-            'thunderstorm': 'Thunderstorm',
-            'lightsnow': 'Light Snow',
-            'heavysnow': 'Heavy Snow',
-            'rainandsnow': 'Rain and Snow',
-        }
 
-        if normalized in friendly_names:
-            return friendly_names[normalized]
+        if normalized in FRIENDLY_WEATHER_NAMES:
+            return FRIENDLY_WEATHER_NAMES[normalized]
 
         return condition.replace('_', ' ').replace('-', ' ').title()
 
@@ -447,16 +452,14 @@ class PhotoFrameApp(App):
             logging.warning("Weather config missing weather_api_key or home_assistant_weather_url")
             return "Weather unavailable", self.get_weather_icon_path(None)
 
-        retries = 3
-        timeout = 8
         last_error = None
 
-        for attempt in range(retries):
+        for attempt in range(WEATHER_RETRIES):
             try:
                 response = requests.get(
                     url,
                     headers={"Authorization": f"Bearer {api_key}"},
-                    timeout=timeout
+                    timeout=WEATHER_TIMEOUT_SECONDS
                 )
                 response.raise_for_status()
                 data = response.json()
@@ -469,7 +472,7 @@ class PhotoFrameApp(App):
                 return f"{temperature} F  |  {weather}", weather_icon_path
             except requests.RequestException as e:
                 last_error = e
-                if attempt < retries - 1:
+                if attempt < WEATHER_RETRIES - 1:
                     time.sleep(1.5 ** attempt)
             except (KeyError, TypeError, ValueError) as e:
                 logging.error("Unexpected weather payload: %s", e)
@@ -478,43 +481,40 @@ class PhotoFrameApp(App):
         logging.error("Error fetching weather data: %s", last_error)
         return "Weather unavailable", self.get_weather_icon_path(None)
 
-    def get_current_time(self):
-        current_time = datetime.now()
-        formatted_time = current_time.strftime('%I:%M %p')
-        return formatted_time
+    def get_current_time(self) -> str:
+        return datetime.now().strftime('%I:%M %p')
 
-    def get_current_date(self):
-        current_date = datetime.now()
-        return current_date.strftime('%A, %b %d')
+    def get_current_date(self) -> str:
+        return datetime.now().strftime('%A, %b %d')
 
-    def update_clock(self, dt):
+    def update_clock(self, _dt=None) -> None:
         self.clock_label.text = self.get_current_time()
         self.date_label.text = self.get_current_date()
 
-    def update_weather(self, dt=None):
+    def update_weather(self, _dt=None) -> None:
         if self.weather_request_in_progress:
             return
 
         self.weather_request_in_progress = True
         Thread(target=self._update_weather_worker, daemon=True).start()
 
-    def _update_weather_worker(self):
+    def _update_weather_worker(self) -> None:
         try:
             weather_text, icon_path = self.fetch_weather_data()
-        except Exception as e:
-            logging.error("Unhandled error while fetching weather data: %s", e)
+        except Exception:
+            logging.exception("Unhandled error while fetching weather data")
             weather_text = "Weather unavailable"
             icon_path = self.get_weather_icon_path(None)
         Clock.schedule_once(lambda dt: self._apply_weather_update(weather_text, icon_path), 0)
 
-    def _apply_weather_update(self, weather_text, icon_path):
+    def _apply_weather_update(self, weather_text: str, icon_path: str) -> None:
         self.weather_label.text = weather_text
         if self.weather_icon.source != icon_path:
             self.weather_icon.source = icon_path
             self.weather_icon.reload()
         self.weather_request_in_progress = False
 
-    def check_for_new_images(self, dt=None):
+    def check_for_new_images(self, _dt=None) -> None:
         """
         Check for new images in the photos directory and reload the images if new images are found.
         """
@@ -524,17 +524,17 @@ class PhotoFrameApp(App):
         self.sync_in_progress = True
         Thread(target=self._sync_images_worker, daemon=True).start()
 
-    def _sync_images_worker(self):
+    def _sync_images_worker(self) -> None:
         sync_error = None
         try:
             sync_photos()
-        except Exception as e:
-            logging.error("Error syncing photos: %s", e)
-            sync_error = e
+        except Exception as error:
+            logging.exception("Error syncing photos")
+            sync_error = error
 
         Clock.schedule_once(lambda dt: self._apply_synced_images(sync_error), 0)
 
-    def _apply_synced_images(self, sync_error=None):
+    def _apply_synced_images(self, sync_error=None) -> None:
         self.sync_in_progress = False
 
         if sync_error:
@@ -559,37 +559,34 @@ class PhotoFrameApp(App):
                 self.image_widget.opacity = 1
                 return
 
-            self.load_next_image(force=True)  # Force refresh the displayed image
+            self.load_next_image()  # Refresh the displayed image
         else:
             self.show_toast("No new images found.")
 
-    def update_image(self, dt=None):
+    def update_image(self, _dt=None) -> None:
         """
         Update the image being displayed on the slideshow timer.
         """
         if not self.images:
             return
 
-        self.load_next_image(force=True)
+        self.load_next_image()
 
-    def reset_image_cycle_timer(self):
+    def reset_image_cycle_timer(self) -> None:
         if self.image_cycle_event is not None:
             self.image_cycle_event.cancel()
         self.image_cycle_event = Clock.schedule_interval(self.update_image, self.image_cycle_seconds)
 
-    def prepare_manual_navigation(self):
+    def prepare_manual_navigation(self) -> None:
         Animation.cancel_all(self.image_widget)
         self.image_widget.opacity = 1
         self.reset_image_cycle_timer()
 
-    def load_next_image(self, force=False, manual=False):
+    def load_next_image(self, manual: bool = False) -> None:
         """
         Load the next image in the list and fade it in.
         """
         if not self.images:
-            return
-
-        if not (manual or force):
             return
 
         if manual:
@@ -604,10 +601,10 @@ class PhotoFrameApp(App):
 
         Animation.cancel_all(self.image_widget)
         self.image_widget.opacity = 0
-        anim = Animation(opacity=1, duration=1.5)
+        anim = Animation(opacity=1, duration=FADE_DURATION_SECONDS)
         anim.start(self.image_widget)
 
-    def load_previous_image(self, manual=False):
+    def load_previous_image(self, manual: bool = False) -> None:
         """
         Load the previous image in the list and fade it in.
         """
@@ -626,10 +623,10 @@ class PhotoFrameApp(App):
 
         Animation.cancel_all(self.image_widget)
         self.image_widget.opacity = 0
-        anim = Animation(opacity=1, duration=1.5)
+        anim = Animation(opacity=1, duration=FADE_DURATION_SECONDS)
         anim.start(self.image_widget)
 
-    def load_images(self, path: str):
+    def load_images(self, path: str) -> list[str]:
         """
         Load all images in the given path.
 
@@ -637,24 +634,12 @@ class PhotoFrameApp(App):
             path (str): Path to our photos directory.
 
         Returns:
-            List: List of images in our photos directory.
+            list[str]: List of images in our photos directory.
         """
         images = []
         for file in sorted(os.scandir(path), key=lambda entry: entry.name.lower()):
-            if file.is_file() and file.name.lower().endswith(('.jpg', '.jpeg', '.png')):
-                full_path = os.path.join(path, file.name)
-                mod_time = os.path.getmtime(full_path)
-
-                # Update the cache for new or modified files
-                if full_path not in self.image_cache or self.image_cache[full_path] < mod_time:
-                    self.image_cache[full_path] = mod_time
-
-                images.append(full_path)
-
-        # Remove entries for images that are no longer present
-        for cached_path in list(self.image_cache.keys()):
-            if cached_path not in images:
-                del self.image_cache[cached_path]
+            if file.is_file() and file.name.lower().endswith(IMAGE_EXTENSIONS):
+                images.append(os.path.join(path, file.name))
 
         return images
 

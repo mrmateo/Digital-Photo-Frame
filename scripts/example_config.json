@@ -2,5 +2,7 @@
     "album_id": "your_album_id",
     "api_key": "your_immich_api_key",
     "immich_server_url": "http://your-immich-server:2283",
+    "home_assistant_weather_url": "http://homeassistant.local:8123/api/states/weather.kord_daynight",
+    "weather_api_key": "your_home_assistant_api_key",
     "local_folder": "/path/to/your/local/folder"
 }
