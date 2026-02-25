@@ -49,7 +49,14 @@ Or use the helper script:
 scripts/run_tests.sh
 ```
 
-The tests cover photo sync behavior, weather/data formatting helpers, slideshow navigation logic, and API connectivity script behavior.
+The tests cover photo sync behavior, weather/data formatting helpers, slideshow navigation logic, API connectivity script behavior, UI layout/position contracts, and Raspberry Pi runtime wiring (shutdown command/button, service file, run script).
+
+### Live API Connectivity Check
+To run a real API connectivity check using your configured `scripts/config.json`:
+
+```bash
+venv/bin/python tests/test_api.py
+```
 
 ## Notes
 - The application requires an Immich server with an API key and album ID configured in `config.json`.
