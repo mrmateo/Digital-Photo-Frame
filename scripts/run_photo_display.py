@@ -33,6 +33,7 @@ WEATHER_TIMEOUT_SECONDS = 8
 WEATHER_RETRIES = 3
 FADE_DURATION_SECONDS = 1.5
 TOAST_DURATION_SECONDS = 5
+SYNC_STATUS_CLEAR_SECONDS = 10
 IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png')
 
 WEATHER_ICON_KEYS = {
@@ -157,6 +158,7 @@ class PhotoFrameApp(App):
         self.apply_settings()  # Configure Kivy with defined settings
         self.index = 0
         self.sync_in_progress = False
+        self.sync_status_clear_event = None
         self.weather_request_in_progress = False
         self.photos_path = self.resolve_photos_path(self.local_config.get('local_folder'))
         os.makedirs(self.photos_path, exist_ok=True)
@@ -242,6 +244,18 @@ class PhotoFrameApp(App):
         )
         self.weather_label.bind(size=self._sync_text_size)
 
+        self.sync_status_label = Label(
+            text='',
+            font_size='16sp',
+            color=[0.83, 0.92, 1, 1],
+            size_hint=(1, None),
+            height=dp(20),
+            halign='left',
+            valign='middle',
+            opacity=0,
+        )
+        self.sync_status_label.bind(size=self._sync_text_size)
+
         button_path = os.path.join(os.path.dirname(__file__), 'assets')
         sync_icon = os.path.join(button_path, 'sync_icon.png')
         shutdown_icon = os.path.join(button_path, 'shutdown_icon.png')
@@ -284,6 +298,7 @@ class PhotoFrameApp(App):
         self.info_panel.add_widget(self.clock_label)
         self.info_panel.add_widget(self.date_label)
         self.info_panel.add_widget(self.weather_row)
+        self.info_panel.add_widget(self.sync_status_label)
         layout.add_widget(self.info_panel)
 
         self.update_info_panel_layout()
@@ -353,6 +368,8 @@ class PhotoFrameApp(App):
             self.weather_controls.size = (dp(196), dp(84))
             self.refresh_button.size = (dp(84), dp(84))
             self.power_button.size = (dp(84), dp(84))
+            self.sync_status_label.font_size = '20sp'
+            self.sync_status_label.height = dp(32)
         else:
             panel_width = max(dp(340), min(dp(560), Window.width * 0.66))
             self.info_panel.pos_hint = {'x': 0.04, 'y': 0.02}
@@ -369,14 +386,19 @@ class PhotoFrameApp(App):
             self.weather_controls.size = (dp(172), dp(72))
             self.refresh_button.size = (dp(72), dp(72))
             self.power_button.size = (dp(72), dp(72))
+            self.sync_status_label.font_size = '16sp'
+            self.sync_status_label.height = dp(24)
 
-        # Keep vertical breathing room symmetric by sizing the panel from its
-        # row heights, spacing, and explicit top/bottom padding.
+        row_heights = [
+            self.clock_label.height,
+            self.date_label.height,
+            self.weather_row.height,
+            self.sync_status_label.height,
+        ]
+
         panel_height = (
-            self.clock_label.height
-            + self.date_label.height
-            + self.weather_row.height
-            + (self.info_panel.spacing * 2)
+            sum(row_heights)
+            + (self.info_panel.spacing * (len(row_heights) - 1))
             + self.info_panel.padding[1]
             + self.info_panel.padding[3]
         )
@@ -392,6 +414,64 @@ class PhotoFrameApp(App):
         Config.write()
 
         Window.show_cursor = False
+
+    def set_sync_button_enabled(self, enabled: bool) -> None:
+        """Enable or disable the manual sync button."""
+        if not hasattr(self, 'refresh_button'):
+            return
+
+        self.refresh_button.disabled = not enabled
+        self.refresh_button.opacity = 1 if enabled else 0.45
+
+    def clear_sync_status(self, _dt=None) -> None:
+        """Hide sync status text."""
+        self.sync_status_label.text = ''
+        self.sync_status_label.opacity = 0
+        self.sync_status_clear_event = None
+
+    def set_sync_status(self, message: str, auto_clear_seconds: int | None = None) -> None:
+        """Show sync status text, optionally clearing it later."""
+        if self.sync_status_clear_event is not None:
+            self.sync_status_clear_event.cancel()
+            self.sync_status_clear_event = None
+
+        self.sync_status_label.text = message
+        self.sync_status_label.opacity = 1 if message else 0
+
+        if auto_clear_seconds is not None and message:
+            self.sync_status_clear_event = Clock.schedule_once(
+                self.clear_sync_status,
+                auto_clear_seconds,
+            )
+
+    def queue_sync_status_update(self, message: str) -> None:
+        """Queue a sync progress update from worker thread to UI thread."""
+        Clock.schedule_once(lambda dt: self.set_sync_status(message), 0)
+
+    def format_sync_summary(self, summary: dict[str, int] | None) -> str:
+        """Build a user-friendly sync result summary."""
+        if not summary:
+            return 'Sync complete.'
+
+        added = summary.get('downloaded', 0)
+        removed = summary.get('deleted', 0)
+        converted = summary.get('converted', 0)
+        failed = summary.get('failed', 0)
+
+        changes = []
+        if added:
+            changes.append(f'{added} added')
+        if removed:
+            changes.append(f'{removed} removed')
+        if converted:
+            changes.append(f'{converted} converted')
+        if failed:
+            changes.append(f'{failed} failed')
+
+        if not changes:
+            return 'Sync complete: no changes.'
+
+        return f"Sync complete: {', '.join(changes)}."
 
     def power_off(self, _instance) -> None:
         """
@@ -519,49 +599,56 @@ class PhotoFrameApp(App):
         Check for new images in the photos directory and reload the images if new images are found.
         """
         if self.sync_in_progress:
+            self.set_sync_status('Sync already in progress...', auto_clear_seconds=3)
             return
 
         self.sync_in_progress = True
+        self.set_sync_button_enabled(False)
+        self.set_sync_status('Syncing photos...')
         Thread(target=self._sync_images_worker, daemon=True).start()
 
     def _sync_images_worker(self) -> None:
         sync_error = None
+        sync_summary = None
         try:
-            sync_photos()
+            sync_summary = sync_photos(progress_callback=self.queue_sync_status_update)
         except Exception as error:
             logging.exception("Error syncing photos")
             sync_error = error
 
-        Clock.schedule_once(lambda dt: self._apply_synced_images(sync_error), 0)
+        Clock.schedule_once(
+            lambda dt, err=sync_error, summary=sync_summary: self._apply_synced_images(err, summary),
+            0,
+        )
 
-    def _apply_synced_images(self, sync_error=None) -> None:
+    def _apply_synced_images(self, sync_error=None, sync_summary: dict[str, int] | None = None) -> None:
         self.sync_in_progress = False
+        self.set_sync_button_enabled(True)
 
         if sync_error:
             self.show_toast("Error syncing photos.")
+            self.set_sync_status('Sync failed. Please try again.', auto_clear_seconds=SYNC_STATUS_CLEAR_SECONDS)
             return
 
         new_images = self.load_images(self.photos_path)
 
         if new_images != self.images:
-            self.show_toast("Images updated. Reloading...")
             self.images = new_images
 
             if not self.images:
                 logging.warning("No images found in the photos directory.")
                 self.image_widget.source = ''
-                return
+            else:
+                # If the currently displayed image was deleted, load the first image from the new list
+                if self.image_widget.source not in self.images:
+                    self.index = 0
+                    self.image_widget.source = self.images[self.index]
+                    self.image_widget.opacity = 1
+                else:
+                    self.load_next_image()  # Refresh the displayed image
 
-            # If the currently displayed image was deleted, load the first image from the new list
-            if self.image_widget.source not in self.images:
-                self.index = 0
-                self.image_widget.source = self.images[self.index]
-                self.image_widget.opacity = 1
-                return
-
-            self.load_next_image()  # Refresh the displayed image
-        else:
-            self.show_toast("No new images found.")
+        summary_text = self.format_sync_summary(sync_summary)
+        self.set_sync_status(summary_text, auto_clear_seconds=SYNC_STATUS_CLEAR_SECONDS)
 
     def update_image(self, _dt=None) -> None:
         """

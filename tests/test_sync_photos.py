@@ -49,8 +49,8 @@ class SyncPhotosTests(unittest.TestCase):
         ]
 
         with (
-            patch('sync_photos.requests.get', side_effect=responses) as mock_get,
-            patch('sync_photos.time.sleep') as mock_sleep,
+            patch('photo_sync_service.requests.get', side_effect=responses) as mock_get,
+            patch('photo_sync_service.time.sleep') as mock_sleep,
         ):
             response = sync_photos.get_with_retries('http://example.test', {}, timeout=5, retries=2)
 
@@ -86,19 +86,22 @@ class SyncPhotosTests(unittest.TestCase):
                 output_path.write_bytes(b'converted-jpg-bytes')
 
             with (
-                patch.object(sync_photos, 'load_config', return_value=config),
+                patch.object(sync_photos.DEFAULT_SERVICE, 'load_config', return_value=config),
                 patch.object(
-                    sync_photos,
+                    sync_photos.DEFAULT_SERVICE,
                     'get_with_retries',
                     side_effect=[album_response, jpg_response, heic_response],
                 ),
-                patch.object(sync_photos, 'convert_to_jpeg', side_effect=fake_convert),
+                patch.object(sync_photos.DEFAULT_SERVICE, 'convert_to_jpeg', side_effect=fake_convert),
             ):
-                sync_photos.sync_photos()
+                summary = sync_photos.sync_photos()
 
             self.assertEqual((photos_dir / 'family.jpg').read_bytes(), b'jpg-bytes')
             self.assertEqual((photos_dir / 'vacation.jpg').read_bytes(), b'converted-jpg-bytes')
             self.assertFalse(stale_file.exists())
+            self.assertEqual(summary['downloaded'], 2)
+            self.assertEqual(summary['converted'], 1)
+            self.assertEqual(summary['deleted'], 1)
 
     def test_sync_photos_skips_download_when_file_exists(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -117,13 +120,15 @@ class SyncPhotosTests(unittest.TestCase):
             )
 
             with (
-                patch.object(sync_photos, 'load_config', return_value=config),
-                patch.object(sync_photos, 'get_with_retries', return_value=album_response) as mock_get,
+                patch.object(sync_photos.DEFAULT_SERVICE, 'load_config', return_value=config),
+                patch.object(sync_photos.DEFAULT_SERVICE, 'get_with_retries', return_value=album_response) as mock_get,
             ):
-                sync_photos.sync_photos()
+                summary = sync_photos.sync_photos()
 
             mock_get.assert_called_once()
             self.assertEqual(existing.read_bytes(), b'existing')
+            self.assertEqual(summary['downloaded'], 0)
+            self.assertEqual(summary['skipped_existing'], 1)
 
     def test_sync_photos_skips_assets_with_missing_fields(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -146,18 +151,50 @@ class SyncPhotosTests(unittest.TestCase):
             valid_download = FakeResponse(content=b'valid-bytes')
 
             with (
-                patch.object(sync_photos, 'load_config', return_value=config),
+                patch.object(sync_photos.DEFAULT_SERVICE, 'load_config', return_value=config),
                 patch.object(
-                    sync_photos,
+                    sync_photos.DEFAULT_SERVICE,
                     'get_with_retries',
                     side_effect=[album_response, valid_download],
                 ) as mock_get,
             ):
-                sync_photos.sync_photos()
+                summary = sync_photos.sync_photos()
 
             self.assertEqual((photos_dir / 'valid.jpg').read_bytes(), b'valid-bytes')
             self.assertFalse((photos_dir / 'missing-id.jpg').exists())
             self.assertEqual(mock_get.call_count, 2)
+            self.assertEqual(summary['downloaded'], 1)
+            self.assertEqual(summary['skipped_invalid'], 2)
+
+    def test_sync_photos_emits_progress_messages(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            photos_dir = Path(temp_dir)
+            config = {
+                'immich_server_url': 'http://immich.local:2283',
+                'api_key': 'test-key',
+                'album_id': 'album-1',
+                'local_folder': str(photos_dir),
+            }
+
+            album_response = FakeResponse(
+                json_data={'assets': [{'id': 'asset-1', 'originalFileName': 'vacation.heic'}]}
+            )
+            heic_response = FakeResponse(content=b'heic-bytes')
+
+            def fake_convert(_image_bytes: bytes, output_path: Path) -> None:
+                output_path.write_bytes(b'converted-jpg-bytes')
+
+            progress_messages: list[str] = []
+            with (
+                patch.object(sync_photos.DEFAULT_SERVICE, 'load_config', return_value=config),
+                patch.object(sync_photos.DEFAULT_SERVICE, 'get_with_retries', side_effect=[album_response, heic_response]),
+                patch.object(sync_photos.DEFAULT_SERVICE, 'convert_to_jpeg', side_effect=fake_convert),
+            ):
+                sync_photos.sync_photos(progress_callback=progress_messages.append)
+
+            self.assertIn('Connecting to Immich...', progress_messages)
+            self.assertTrue(any(msg.startswith('Downloading vacation.jpg') for msg in progress_messages))
+            self.assertIn('Converting vacation.heic to JPG...', progress_messages)
 
     def test_main_returns_non_zero_for_config_errors(self) -> None:
         with patch.object(sync_photos, 'sync_photos', side_effect=ValueError('bad config')):

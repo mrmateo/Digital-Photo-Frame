@@ -56,6 +56,9 @@ class RunPhotoDisplayTests(unittest.TestCase):
         app.images = []
         app.index = 0
         app.image_widget = type('Widget', (), {'source': '', 'opacity': 1})()
+        app.refresh_button = type('ButtonState', (), {'disabled': False, 'opacity': 1})()
+        app.sync_status_label = type('StatusLabel', (), {'text': '', 'opacity': 0})()
+        app.sync_status_clear_event = None
         return app
 
     def test_resolve_weather_icon_key_handles_exact_partial_and_unknown(self) -> None:
@@ -236,14 +239,17 @@ class RunPhotoDisplayTests(unittest.TestCase):
     def test_apply_synced_images_shows_error_toast_when_sync_fails(self) -> None:
         app = self.make_app()
         app.sync_in_progress = True
+        app.refresh_button.disabled = True
         app.show_toast = Mock()
         app.load_images = Mock()
 
         app._apply_synced_images(sync_error=RuntimeError('sync failed'))
 
         self.assertFalse(app.sync_in_progress)
+        self.assertFalse(app.refresh_button.disabled)
         app.show_toast.assert_called_once_with('Error syncing photos.')
         app.load_images.assert_not_called()
+        self.assertIn('Sync failed', app.sync_status_label.text)
 
     def test_apply_synced_images_resets_when_current_image_removed(self) -> None:
         app = self.make_app()
@@ -255,13 +261,16 @@ class RunPhotoDisplayTests(unittest.TestCase):
         app.show_toast = Mock()
         app.load_images = Mock(return_value=['new1.jpg', 'new2.jpg'])
 
-        app._apply_synced_images()
+        summary = {'downloaded': 2, 'deleted': 1, 'converted': 1, 'failed': 0}
+
+        app._apply_synced_images(sync_summary=summary)
 
         self.assertFalse(app.sync_in_progress)
-        app.show_toast.assert_called_once_with('Images updated. Reloading...')
+        app.show_toast.assert_not_called()
         self.assertEqual(app.index, 0)
         self.assertEqual(app.image_widget.source, 'new1.jpg')
         self.assertEqual(app.image_widget.opacity, 1)
+        self.assertEqual(app.sync_status_label.text, 'Sync complete: 2 added, 1 removed, 1 converted.')
 
     def test_apply_synced_images_reports_no_changes(self) -> None:
         app = self.make_app()
@@ -272,10 +281,48 @@ class RunPhotoDisplayTests(unittest.TestCase):
         app.show_toast = Mock()
         app.load_images = Mock(return_value=['one.jpg'])
 
-        app._apply_synced_images()
+        app._apply_synced_images(sync_summary={'downloaded': 0, 'deleted': 0, 'converted': 0, 'failed': 0})
 
         self.assertFalse(app.sync_in_progress)
-        app.show_toast.assert_called_once_with('No new images found.')
+        app.show_toast.assert_not_called()
+        self.assertEqual(app.sync_status_label.text, 'Sync complete: no changes.')
+
+    def test_format_sync_summary_reports_changes(self) -> None:
+        app = self.make_app()
+
+        message = app.format_sync_summary({'downloaded': 5, 'deleted': 2, 'converted': 1, 'failed': 0})
+
+        self.assertEqual(message, 'Sync complete: 5 added, 2 removed, 1 converted.')
+
+    def test_format_sync_summary_reports_no_changes(self) -> None:
+        app = self.make_app()
+
+        message = app.format_sync_summary({'downloaded': 0, 'deleted': 0, 'converted': 0, 'failed': 0})
+
+        self.assertEqual(message, 'Sync complete: no changes.')
+
+    def test_check_for_new_images_disables_button_and_sets_status(self) -> None:
+        app = self.make_app()
+        app.sync_in_progress = False
+
+        with patch('run_photo_display.Thread') as mock_thread:
+            app.check_for_new_images()
+
+        self.assertTrue(app.sync_in_progress)
+        self.assertTrue(app.refresh_button.disabled)
+        self.assertEqual(app.refresh_button.opacity, 0.45)
+        self.assertEqual(app.sync_status_label.text, 'Syncing photos...')
+        mock_thread.assert_called_once()
+
+    def test_check_for_new_images_ignores_duplicate_requests_while_syncing(self) -> None:
+        app = self.make_app()
+        app.sync_in_progress = True
+
+        with patch('run_photo_display.Thread') as mock_thread:
+            app.check_for_new_images()
+
+        mock_thread.assert_not_called()
+        self.assertIn('already in progress', app.sync_status_label.text)
 
 
 class TapImageInteractionTests(unittest.TestCase):
@@ -458,6 +505,8 @@ class UiLayoutContractTests(unittest.TestCase):
         self.assertEqual(self.app.date_label.color, [0.86, 0.9, 0.96, 1])
         self.assertEqual(self.app.weather_label.color, [0.95, 0.99, 1, 1])
         self.assertEqual(self.app.weather_label.text, 'Weather loading...')
+        self.assertEqual(self.app.sync_status_label.text, '')
+        self.assertEqual(self.app.sync_status_label.opacity, 0)
 
     def test_landscape_widgets_stay_inside_translucent_panel(self) -> None:
         self._apply_layout(width_dp=1280, height_dp=720)
@@ -468,6 +517,7 @@ class UiLayoutContractTests(unittest.TestCase):
         self._assert_inside_panel(self.app.weather_label, 'weather_label')
         self._assert_inside_panel(self.app.weather_icon, 'weather_icon')
         self._assert_inside_panel(self.app.weather_controls, 'weather_controls')
+        self._assert_inside_panel(self.app.sync_status_label, 'sync_status_label')
 
     def test_portrait_widgets_stay_inside_translucent_panel(self) -> None:
         self._apply_layout(width_dp=720, height_dp=1280)
@@ -478,6 +528,7 @@ class UiLayoutContractTests(unittest.TestCase):
         self._assert_inside_panel(self.app.weather_label, 'weather_label')
         self._assert_inside_panel(self.app.weather_icon, 'weather_icon')
         self._assert_inside_panel(self.app.weather_controls, 'weather_controls')
+        self._assert_inside_panel(self.app.sync_status_label, 'sync_status_label')
 
     def test_power_button_press_triggers_shutdown_command(self) -> None:
         with patch('run_photo_display.subprocess.run') as mock_run:
