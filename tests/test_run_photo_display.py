@@ -101,6 +101,19 @@ class RunPhotoDisplayTests(unittest.TestCase):
 
         self.assertEqual([Path(path).name for path in images], ['a.png', 'B.JPG'])
 
+    def test_load_images_uses_natural_filename_order(self) -> None:
+        app = self.make_app()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            photo_dir = Path(temp_dir)
+            (photo_dir / 'img2.jpg').write_bytes(b'jpg')
+            (photo_dir / 'img10.jpg').write_bytes(b'jpg')
+            (photo_dir / 'img1.jpg').write_bytes(b'jpg')
+
+            images = app.load_images(str(photo_dir))
+
+        self.assertEqual([Path(path).name for path in images], ['img1.jpg', 'img2.jpg', 'img10.jpg'])
+
     def test_fetch_weather_data_returns_unavailable_when_not_configured(self) -> None:
         app = self.make_app()
 
@@ -189,6 +202,30 @@ class RunPhotoDisplayTests(unittest.TestCase):
         app.prepare_manual_navigation.assert_called_once()
         self.assertEqual(app.index, 0)
         self.assertEqual(app.image_widget.source, 'one.jpg')
+
+    def test_load_next_image_uses_current_source_when_index_is_stale(self) -> None:
+        app = self.make_app()
+        app.images = ['a.jpg', 'b.jpg', 'c.jpg']
+        app.index = 0
+        app.image_widget.source = 'b.jpg'
+        app.prepare_manual_navigation = Mock()
+
+        app.load_next_image(manual=True)
+
+        self.assertEqual(app.index, 2)
+        self.assertEqual(app.image_widget.source, 'c.jpg')
+
+    def test_load_previous_image_uses_current_source_when_index_is_stale(self) -> None:
+        app = self.make_app()
+        app.images = ['a.jpg', 'b.jpg', 'c.jpg']
+        app.index = 2
+        app.image_widget.source = 'b.jpg'
+        app.prepare_manual_navigation = Mock()
+
+        app.load_previous_image(manual=True)
+
+        self.assertEqual(app.index, 0)
+        self.assertEqual(app.image_widget.source, 'a.jpg')
 
     def test_power_off_runs_shutdown_command(self) -> None:
         app = self.make_app()
@@ -408,7 +445,7 @@ class TapImageInteractionTests(unittest.TestCase):
 
         fake_app.load_previous_image.assert_called_once_with(manual=True)
 
-    def test_opposite_side_tap_is_ignored_inside_block_window(self) -> None:
+    def test_opposite_side_tap_is_allowed(self) -> None:
         image = run_photo_display.TapImage()
         image.x = 0
         image.width = 100
@@ -425,7 +462,7 @@ class TapImageInteractionTests(unittest.TestCase):
             image.on_touch_down(right_touch)
 
         fake_app.load_previous_image.assert_called_once_with(manual=True)
-        fake_app.load_next_image.assert_not_called()
+        fake_app.load_next_image.assert_called_once_with(manual=True)
 
 
 class UiLayoutContractTests(unittest.TestCase):

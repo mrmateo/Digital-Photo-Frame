@@ -4,6 +4,7 @@ from datetime import datetime
 import json
 import logging
 import os
+import re
 import subprocess
 import time
 from threading import Thread
@@ -77,11 +78,8 @@ class TapImage(Image):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.last_touch_time = 0.0
-        self.last_nav_side = None
-        self.last_nav_time = 0.0
         self.touch_threshold = 0.2  # 200 milliseconds
         self.edge_threshold = 0.4  # 40% of the width from each edge
-        self.opposite_side_window = 1.0
 
     def on_touch_down(self, touch):
         """
@@ -111,16 +109,7 @@ class TapImage(Image):
         if not side:
             return super().on_touch_down(touch)
 
-        if (
-            self.last_nav_side is not None
-            and side != self.last_nav_side
-            and (current_time - self.last_nav_time) < self.opposite_side_window
-        ):
-            return True
-
         self.last_touch_time = current_time
-        self.last_nav_side = side
-        self.last_nav_time = current_time
 
         app = App.get_running_app()
         if app:
@@ -150,6 +139,12 @@ class InfoPanel(BoxLayout):
 
 
 class PhotoFrameApp(App):
+
+    @staticmethod
+    def natural_sort_key(name: str) -> list:
+        """Return a natural sort key for filenames."""
+        parts = re.split(r'(\d+)', name.lower())
+        return [int(part) if part.isdigit() else part for part in parts]
 
     def build(self):
         """Set up the Kivy app and return the root widget."""
@@ -688,6 +683,9 @@ class PhotoFrameApp(App):
         if not self.images:
             return
 
+        if self.image_widget.source in self.images:
+            self.index = self.images.index(self.image_widget.source)
+
         if manual:
             self.prepare_manual_navigation()
 
@@ -709,6 +707,9 @@ class PhotoFrameApp(App):
         """
         if not self.images:
             return
+
+        if self.image_widget.source in self.images:
+            self.index = self.images.index(self.image_widget.source)
 
         if manual:
             self.prepare_manual_navigation()
@@ -736,7 +737,7 @@ class PhotoFrameApp(App):
             list[str]: List of images in our photos directory.
         """
         images = []
-        for file in sorted(os.scandir(path), key=lambda entry: entry.name.lower()):
+        for file in sorted(os.scandir(path), key=lambda entry: self.natural_sort_key(entry.name)):
             if file.is_file() and file.name.lower().endswith(IMAGE_EXTENSIONS):
                 images.append(os.path.join(path, file.name))
 
