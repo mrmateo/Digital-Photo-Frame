@@ -185,6 +185,29 @@ class PhotoFrameApp(App):
         Clock.schedule_once(self.check_for_new_images, 0)
 
         # Build our information panel (time, date, weather)
+        self.sync_status_panel = InfoPanel(
+            orientation='horizontal',
+            size_hint=(None, None),
+            size=(dp(520), dp(44)),
+            pos_hint={'center_x': 0.5, 'top': 0.98},
+            padding=(dp(14), dp(8), dp(14), dp(8)),
+            spacing=0,
+            opacity=0,
+        )
+
+        self.sync_status_label = Label(
+            text='',
+            font_size='16sp',
+            color=[0.83, 0.92, 1, 1],
+            size_hint=(1, 1),
+            halign='center',
+            valign='middle',
+            opacity=0,
+        )
+        self.sync_status_label.bind(size=self._sync_text_size)
+        self.sync_status_panel.add_widget(self.sync_status_label)
+        layout.add_widget(self.sync_status_panel)
+
         self.info_panel = InfoPanel(
             orientation='vertical',
             size_hint=(None, None),
@@ -244,18 +267,6 @@ class PhotoFrameApp(App):
         )
         self.weather_label.bind(size=self._sync_text_size)
 
-        self.sync_status_label = Label(
-            text='',
-            font_size='16sp',
-            color=[0.83, 0.92, 1, 1],
-            size_hint=(1, None),
-            height=dp(20),
-            halign='left',
-            valign='middle',
-            opacity=0,
-        )
-        self.sync_status_label.bind(size=self._sync_text_size)
-
         button_path = os.path.join(os.path.dirname(__file__), 'assets')
         sync_icon = os.path.join(button_path, 'sync_icon.png')
         shutdown_icon = os.path.join(button_path, 'shutdown_icon.png')
@@ -298,7 +309,6 @@ class PhotoFrameApp(App):
         self.info_panel.add_widget(self.clock_label)
         self.info_panel.add_widget(self.date_label)
         self.info_panel.add_widget(self.weather_row)
-        self.info_panel.add_widget(self.sync_status_label)
         layout.add_widget(self.info_panel)
 
         self.update_info_panel_layout()
@@ -357,6 +367,8 @@ class PhotoFrameApp(App):
             self.info_panel.pos_hint = {'center_x': 0.5, 'y': 0.03}
             self.info_panel.padding = (dp(22), dp(12), dp(22), dp(12))
             self.info_panel.spacing = dp(7)
+            self.sync_status_panel.size = (max(dp(360), min(dp(920), Window.width * 0.92)), dp(56))
+            self.sync_status_label.font_size = '20sp'
             self.clock_label.font_size = '68sp'
             self.date_label.font_size = '26sp'
             self.weather_label.font_size = '30sp'
@@ -368,13 +380,13 @@ class PhotoFrameApp(App):
             self.weather_controls.size = (dp(196), dp(84))
             self.refresh_button.size = (dp(84), dp(84))
             self.power_button.size = (dp(84), dp(84))
-            self.sync_status_label.font_size = '20sp'
-            self.sync_status_label.height = dp(32)
         else:
             panel_width = max(dp(340), min(dp(560), Window.width * 0.66))
             self.info_panel.pos_hint = {'x': 0.04, 'y': 0.02}
             self.info_panel.padding = (dp(18), dp(10), dp(18), dp(10))
             self.info_panel.spacing = dp(4)
+            self.sync_status_panel.size = (max(dp(280), min(dp(760), Window.width * 0.64)), dp(44))
+            self.sync_status_label.font_size = '16sp'
             self.clock_label.font_size = '54sp'
             self.date_label.font_size = '20sp'
             self.weather_label.font_size = '26sp'
@@ -386,14 +398,11 @@ class PhotoFrameApp(App):
             self.weather_controls.size = (dp(172), dp(72))
             self.refresh_button.size = (dp(72), dp(72))
             self.power_button.size = (dp(72), dp(72))
-            self.sync_status_label.font_size = '16sp'
-            self.sync_status_label.height = dp(24)
 
         row_heights = [
             self.clock_label.height,
             self.date_label.height,
             self.weather_row.height,
-            self.sync_status_label.height,
         ]
 
         panel_height = (
@@ -427,6 +436,7 @@ class PhotoFrameApp(App):
         """Hide sync status text."""
         self.sync_status_label.text = ''
         self.sync_status_label.opacity = 0
+        self.sync_status_panel.opacity = 0
         self.sync_status_clear_event = None
 
     def set_sync_status(self, message: str, auto_clear_seconds: int | None = None) -> None:
@@ -437,6 +447,7 @@ class PhotoFrameApp(App):
 
         self.sync_status_label.text = message
         self.sync_status_label.opacity = 1 if message else 0
+        self.sync_status_panel.opacity = 1 if message else 0
 
         if auto_clear_seconds is not None and message:
             self.sync_status_clear_event = Clock.schedule_once(
@@ -645,7 +656,8 @@ class PhotoFrameApp(App):
                     self.image_widget.source = self.images[self.index]
                     self.image_widget.opacity = 1
                 else:
-                    self.load_next_image()  # Refresh the displayed image
+                    self.index = self.images.index(self.image_widget.source)
+                    self.image_widget.opacity = 1
 
         summary_text = self.format_sync_summary(sync_summary)
         self.set_sync_status(summary_text, auto_clear_seconds=SYNC_STATUS_CLEAR_SECONDS)

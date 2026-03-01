@@ -58,6 +58,7 @@ class RunPhotoDisplayTests(unittest.TestCase):
         app.image_widget = type('Widget', (), {'source': '', 'opacity': 1})()
         app.refresh_button = type('ButtonState', (), {'disabled': False, 'opacity': 1})()
         app.sync_status_label = type('StatusLabel', (), {'text': '', 'opacity': 0})()
+        app.sync_status_panel = type('StatusPanel', (), {'opacity': 0})()
         app.sync_status_clear_event = None
         return app
 
@@ -287,6 +288,25 @@ class RunPhotoDisplayTests(unittest.TestCase):
         app.show_toast.assert_not_called()
         self.assertEqual(app.sync_status_label.text, 'Sync complete: no changes.')
 
+    def test_apply_synced_images_keeps_current_image_when_still_present(self) -> None:
+        app = self.make_app()
+        app.sync_in_progress = True
+        app.images = ['one.jpg']
+        app.image_widget = type('Widget', (), {'source': 'one.jpg', 'opacity': 0})()
+        app.index = 0
+        app.photos_path = '/unused'
+        app.show_toast = Mock()
+        app.load_images = Mock(return_value=['one.jpg', 'two.jpg'])
+        app.load_next_image = Mock()
+
+        app._apply_synced_images(sync_summary={'downloaded': 1, 'deleted': 0, 'converted': 0, 'failed': 0})
+
+        app.show_toast.assert_not_called()
+        app.load_next_image.assert_not_called()
+        self.assertEqual(app.image_widget.source, 'one.jpg')
+        self.assertEqual(app.index, 0)
+        self.assertEqual(app.image_widget.opacity, 1)
+
     def test_format_sync_summary_reports_changes(self) -> None:
         app = self.make_app()
 
@@ -468,6 +488,7 @@ class UiLayoutContractTests(unittest.TestCase):
         self.root.size = (fake_window.width, fake_window.height)
         self.root.pos = (0, 0)
         self.root.do_layout()
+        self.app.sync_status_panel.do_layout()
         self.app.info_panel.do_layout()
         self.app.weather_row.do_layout()
         run_photo_display.Clock.tick()
@@ -486,19 +507,23 @@ class UiLayoutContractTests(unittest.TestCase):
         self._apply_layout(width_dp=1280, height_dp=720)
 
         self.assertAlmostEqual(self.normalize(self.app.info_panel.size[0]), 560, delta=0.5)
+        self.assertAlmostEqual(self.normalize(self.app.info_panel.size[1]), 206, delta=1.0)
         self.assertAlmostEqual(self.normalize(self.app.clock_label.font_size), 54, delta=0.5)
         self.assertAlmostEqual(self.normalize(self.app.weather_label.font_size), 26, delta=0.5)
         self.assertAlmostEqual(self.normalize(self.app.weather_controls.size[0]), 172, delta=0.5)
         self.assertEqual(self.app.info_panel.pos_hint, {'x': 0.04, 'y': 0.02})
+        self.assertGreater(self.app.sync_status_panel.y, self.app.info_panel.top)
 
     def test_portrait_layout_contract(self) -> None:
         self._apply_layout(width_dp=720, height_dp=1280)
 
         self.assertAlmostEqual(self.normalize(self.app.info_panel.size[0]), 662.4, delta=0.8)
+        self.assertAlmostEqual(self.normalize(self.app.info_panel.size[1]), 252, delta=1.0)
         self.assertAlmostEqual(self.normalize(self.app.clock_label.font_size), 68, delta=0.5)
         self.assertAlmostEqual(self.normalize(self.app.weather_label.font_size), 30, delta=0.5)
         self.assertAlmostEqual(self.normalize(self.app.weather_controls.size[0]), 196, delta=0.5)
         self.assertEqual(self.app.info_panel.pos_hint, {'center_x': 0.5, 'y': 0.03})
+        self.assertGreater(self.app.sync_status_panel.y, self.app.info_panel.top)
 
     def test_info_panel_visual_style_contract(self) -> None:
         self.assertEqual(self.app.clock_label.color, [1, 1, 1, 1])
@@ -507,6 +532,7 @@ class UiLayoutContractTests(unittest.TestCase):
         self.assertEqual(self.app.weather_label.text, 'Weather loading...')
         self.assertEqual(self.app.sync_status_label.text, '')
         self.assertEqual(self.app.sync_status_label.opacity, 0)
+        self.assertEqual(self.app.sync_status_panel.opacity, 0)
 
     def test_landscape_widgets_stay_inside_translucent_panel(self) -> None:
         self._apply_layout(width_dp=1280, height_dp=720)
@@ -517,7 +543,6 @@ class UiLayoutContractTests(unittest.TestCase):
         self._assert_inside_panel(self.app.weather_label, 'weather_label')
         self._assert_inside_panel(self.app.weather_icon, 'weather_icon')
         self._assert_inside_panel(self.app.weather_controls, 'weather_controls')
-        self._assert_inside_panel(self.app.sync_status_label, 'sync_status_label')
 
     def test_portrait_widgets_stay_inside_translucent_panel(self) -> None:
         self._apply_layout(width_dp=720, height_dp=1280)
@@ -528,7 +553,6 @@ class UiLayoutContractTests(unittest.TestCase):
         self._assert_inside_panel(self.app.weather_label, 'weather_label')
         self._assert_inside_panel(self.app.weather_icon, 'weather_icon')
         self._assert_inside_panel(self.app.weather_controls, 'weather_controls')
-        self._assert_inside_panel(self.app.sync_status_label, 'sync_status_label')
 
     def test_power_button_press_triggers_shutdown_command(self) -> None:
         with patch('run_photo_display.subprocess.run') as mock_run:
